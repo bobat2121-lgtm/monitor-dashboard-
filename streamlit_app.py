@@ -117,6 +117,16 @@ st.markdown(
   }
   .empty { color:#5d5d68; text-align:center; padding:3rem 0; font-size:.9rem; }
 
+  .rej-id {
+    font-family:'JetBrains Mono',monospace; font-size:.66rem; font-weight:600;
+    color:#8a8a94; background:#101016; border:1px solid #1d1d25; border-radius:6px;
+    padding:.05rem .4rem; min-width:3.2rem; text-align:center; flex:0 0 auto;
+  }
+  .rej-meta {
+    font-family:'JetBrains Mono',monospace; font-size:.64rem; color:#5d5d68;
+    margin-left:.5rem; white-space:nowrap;
+  }
+
   [data-testid="stExpander"] {
     border: 1px solid #14141a !important; border-radius: 14px !important;
     background: #07070a !important; margin-top: -0.55rem; margin-bottom: .95rem;
@@ -137,6 +147,13 @@ st.markdown(
 @st.cache_data(ttl=120, show_spinner=False)
 def fetch_digests():
     r = requests.get(f"{WORKER_URL}/digests", timeout=15)
+    r.raise_for_status()
+    return r.json()
+
+
+@st.cache_data(ttl=120, show_spinner=False)
+def fetch_rejected(days: int):
+    r = requests.get(f"{WORKER_URL}/rejected", params={"days": days, "limit": 500}, timeout=20)
     r.raise_for_status()
     return r.json()
 
@@ -290,8 +307,8 @@ with st.sidebar:
 st.markdown(
     '<div class="masthead"><h1>📡 Monitor Digest</h1>'
     '<span class="live">● LIVE</span></div>'
-    '<div class="sub">11 Cloudflare workers → digest-aggregator → ranked by Claude '
-    "(Fable 5) at 7am · 9am · 5pm ET, synthesized Fridays 8am ET</div>",
+    '<div class="sub">the monitor worker fleet → digest-aggregator → ranked by Claude '
+    "at 7am · 9am · 5pm ET, synthesized Fridays 8am ET</div>",
     unsafe_allow_html=True,
 )
 
@@ -305,7 +322,7 @@ except Exception as e:
     )
     st.stop()
 
-tab_daily, tab_weekly = st.tabs(["⚡ Daily", "🗞 Weekly"])
+tab_daily, tab_weekly, tab_rejected = st.tabs(["⚡ Daily", "🗞 Weekly", "🗑 Rejected"])
 
 with tab_daily:
     daily = data.get("daily", [])
@@ -325,9 +342,96 @@ with tab_weekly:
         if i < GRADE_PANEL_WEEKLY:
             grade_panel("weekly", post)
 
+# Rejected audit: everything a digest cycle read and did NOT publish. The
+# Routine marks chosen events status='published'; the rest land here. Flagging
+# an item 👍 files owner feedback the next digest run turns into a precedent —
+# the long-term lever for tuning what the digestion phase keeps.
+with tab_rejected:
+    days = st.selectbox("Window", [1, 3, 7, 14], index=1, format_func=lambda d: f"last {d} day{'s' if d > 1 else ''}")
+    try:
+        rej = fetch_rejected(days)
+    except Exception as e:
+        st.markdown(f'<div class="empty">Could not load rejected items.<br/><code>{html.escape(str(e))}</code></div>', unsafe_allow_html=True)
+        rej = None
+    if rej:
+        items = rej.get("items", [])
+        workers = sorted({str(it.get("worker")) for it in items if it.get("worker")})
+        pick = st.selectbox("Worker", ["all"] + workers)
+        if pick != "all":
+            items = [it for it in items if it.get("worker") == pick]
+        st.markdown(
+            f'<div class="sub">{len(items)} rejected item(s) in window · flag one below to teach the ranking</div>',
+            unsafe_allow_html=True,
+        )
+        with st.expander("⚖ flag an item (owner)", expanded=False):
+            st.caption("Enter the item's ID badge. 👍 = this should have ranked (becomes a precedent at the next digest run); 👎 = confirms the rejection.")
+            flag_id = st.number_input("Event ID", min_value=0, step=1, key="rej_flag_id")
+            flag_verdict = st.radio("Verdict", ["👍 should have ranked", "👎 correct rejection"], horizontal=True, key="rej_flag_v")
+            flag_note = st.text_area("Note (optional)", key="rej_flag_note", height=70,
+                                     placeholder="e.g. this Teal Drones award mattered — anything naming a covered subsidiary ranks")
+            if st.button("Submit flag", type="primary", key="rej_flag_sub"):
+                pin = str(st.session_state.get("grader_pin", "")).strip()
+                if not pin:
+                    st.warning("Enter the grader PIN in the sidebar first.")
+                elif not flag_id:
+                    st.info("Enter the event ID from the item's badge.")
+                else:
+                    try:
+                        resp = requests.post(
+                            f"{WORKER_URL}/grade",
+                            json={"pin": pin, "post_type": "rejected", "post_id": int(flag_id),
+                                  "verdict": "up" if flag_verdict.startswith("👍") else "down",
+                                  "note": str(st.session_state.get("rej_flag_note", "")).strip()},
+                            timeout=10,
+                        )
+                        if resp.status_code == 200:
+                            st.success("Flag stored — absorbed into ranking at the next digest run.")
+                        elif resp.status_code == 403:
+                            st.error("Bad PIN.")
+                        elif resp.status_code == 404:
+                            st.error("No event with that ID.")
+                        else:
+                            st.error(f"Error {resp.status_code}: {resp.text[:200]}")
+                    except Exception as e:
+                        st.error(f"Could not reach the aggregator: {e}")
+        if not items:
+            st.markdown('<div class="empty">Nothing rejected in this window — or the first marked cycle has not run yet.</div>', unsafe_allow_html=True)
+        rows = []
+        for it in items[:250]:
+            iid = it.get("id")
+            title = html.escape(str(it.get("title") or ""))
+            url_v = it.get("url")
+            worker_v = html.escape(str(it.get("worker") or ""))
+            ts_v = html.escape(fmt_time(str(it.get("ts") or it.get("created_at") or "")))
+            link = (
+                f'<div class="src"><span class="arrow">↳</span>'
+                f'<a href="{html.escape(str(url_v), quote=True)}" target="_blank">{html.escape(domain_of(str(url_v)))}</a></div>'
+                if url_v else ""
+            )
+            rows.append(
+                f'<div class="item"><div class="item-line"><span class="rej-id">#{iid}</span>'
+                f'<span class="item-text">{title}<span class="rej-meta">{worker_v} · {ts_v}</span></span></div>{link}</div>'
+            )
+        if rows:
+            st.markdown(f'<div class="post">{"".join(rows)}</div>', unsafe_allow_html=True)
+            if len(items) > 250:
+                st.caption(f"Showing newest 250 of {len(items)} — narrow the window or filter by worker.")
+        kills = rej.get("prefilter_kills", [])
+        if kills:
+            with st.expander(f"🧹 prefilter kills ({len(kills)}) — junk dropped before the digest ever saw it"):
+                for k in kills:
+                    st.markdown(
+                        f'<div class="item"><div class="item-line"><span class="rej-id">#{k.get("id")}</span>'
+                        f'<span class="item-text">{html.escape(str(k.get("title") or ""))}'
+                        f'<span class="rej-meta">{html.escape(str(k.get("worker") or ""))} · {html.escape(str(k.get("rule") or ""))}</span></span></div></div>',
+                        unsafe_allow_html=True,
+                    )
+
 st.markdown(
     f'<div class="sub" style="margin-top:1.5rem;text-align:center">'
     f'refreshes every 2 min · <a style="color:#4f8fff;text-decoration:none" '
-    f'href="{WORKER_URL}/digests" target="_blank">raw JSON</a></div>',
+    f'href="{WORKER_URL}/digests" target="_blank">raw JSON</a> · '
+    f'<a style="color:#4f8fff;text-decoration:none" '
+    f'href="{WORKER_URL}/rejected" target="_blank">rejected JSON</a></div>',
     unsafe_allow_html=True,
 )
