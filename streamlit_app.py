@@ -1,8 +1,9 @@
 """Monitor Digest — hyper-modern black feed over the digest-aggregator Worker.
 
 Data source: GET {WORKER_URL}/digests  (public JSON; written by the Claude
-digest Routine into the aggregator-state D1). Two tabs: Daily (one post per
-7am/9am/5pm ET trigger run, newest first) and Weekly (Friday syntheses).
+digest Routine into the aggregator-state D1). Three tabs: Daily (one post per
+7am/9am/5pm ET trigger run, newest first), Weekly (Friday syntheses), and a
+Rejected audit lane for reviewed items that did not make the digest.
 """
 
 import html
@@ -126,6 +127,22 @@ st.markdown(
     font-family:'JetBrains Mono',monospace; font-size:.64rem; color:#5d5d68;
     margin-left:.5rem; white-space:nowrap;
   }
+  .rej-signals {
+    margin-left:3.75rem; margin-top:.3rem; display:flex; flex-wrap:wrap; gap:.3rem;
+  }
+  .rej-chip {
+    font-family:'JetBrains Mono',monospace; font-size:.62rem; font-weight:600;
+    color:#9b9ba7; background:#0d0d12; border:1px solid #202028; border-radius:6px;
+    padding:.08rem .38rem; white-space:nowrap;
+  }
+  .rej-chip.score {
+    color:#00e5a0; border-color:rgba(0,229,160,.28); background:rgba(0,229,160,.05);
+  }
+  .rej-rationale {
+    margin-left:3.75rem; margin-top:.34rem; padding-left:.55rem;
+    border-left:2px solid #202028; color:#858590; font-size:.76rem; line-height:1.45;
+  }
+  .rej-rationale strong { color:#b5b5c0; font-weight:600; }
 
   [data-testid="stExpander"] {
     border: 1px solid #14141a !important; border-radius: 14px !important;
@@ -174,6 +191,43 @@ def domain_of(url: str) -> str:
         return "via Google News" if host == "news.google.com" else host
     except Exception:
         return "source"
+
+
+def rejected_diagnostics(it) -> str:
+    """Compact model diagnostics for rejected items; legacy rows can be blank."""
+    chips = []
+
+    tier = it.get("tier")
+    if tier not in (None, ""):
+        tier_text = str(tier).replace("_", " ").strip()
+        if tier_text:
+            chips.append((tier_text, ""))
+
+    score = it.get("score")
+    if score is not None and str(score).strip() != "":
+        chips.append((f"score {score}", "score"))
+
+    category = it.get("category")
+    if category not in (None, ""):
+        chips.append((str(category).replace("_", " ").strip(), ""))
+
+    novelty = it.get("novelty")
+    if novelty not in (None, ""):
+        chips.append((f"novelty {str(novelty).replace('_', ' ').strip()}", ""))
+
+    chip_html = ""
+    if chips:
+        chip_html = '<div class="rej-signals">' + "".join(
+            f'<span class="rej-chip {css}">{html.escape(text)}</span>'
+            for text, css in chips if text
+        ) + "</div>"
+
+    rationale = str(it.get("rationale") or "").strip()
+    rationale_html = (
+        f'<div class="rej-rationale"><strong>model rationale</strong> · {html.escape(rationale)}</div>'
+        if rationale else ""
+    )
+    return chip_html + rationale_html
 
 
 def render_items(items, cap=None):
@@ -360,7 +414,7 @@ with tab_rejected:
         if pick != "all":
             items = [it for it in items if it.get("worker") == pick]
         st.markdown(
-            f'<div class="sub">{len(items)} rejected item(s) in window · flag one below to teach the ranking</div>',
+            f'<div class="sub">{len(items)} rejected item(s) in window · model diagnostics shown when available · flag one below to teach the ranking</div>',
             unsafe_allow_html=True,
         )
         with st.expander("⚖ flag an item (owner)", expanded=False):
@@ -400,9 +454,10 @@ with tab_rejected:
         for it in items[:250]:
             iid = it.get("id")
             title = html.escape(str(it.get("title") or ""))
-            url_v = it.get("url")
+            url_v = it.get("canonical_url") or it.get("url")
             worker_v = html.escape(str(it.get("worker") or ""))
             ts_v = html.escape(fmt_time(str(it.get("ts") or it.get("created_at") or "")))
+            diagnostics = rejected_diagnostics(it)
             link = (
                 f'<div class="src"><span class="arrow">↳</span>'
                 f'<a href="{html.escape(str(url_v), quote=True)}" target="_blank">{html.escape(domain_of(str(url_v)))}</a></div>'
@@ -410,7 +465,8 @@ with tab_rejected:
             )
             rows.append(
                 f'<div class="item"><div class="item-line"><span class="rej-id">#{iid}</span>'
-                f'<span class="item-text">{title}<span class="rej-meta">{worker_v} · {ts_v}</span></span></div>{link}</div>'
+                f'<span class="item-text">{title}<span class="rej-meta">{worker_v} · {ts_v}</span></span></div>'
+                f'{diagnostics}{link}</div>'
             )
         if rows:
             st.markdown(f'<div class="post">{"".join(rows)}</div>', unsafe_allow_html=True)
