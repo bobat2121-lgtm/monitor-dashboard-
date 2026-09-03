@@ -1,4 +1,4 @@
-"""Monitor Digest — tablet-first editorial feed over the digest aggregator.
+"""The Physical AI Universe — tablet-first editorial feed over the digest aggregator.
 
 Data source: GET {WORKER_URL}/digests. Daily editions are shown in the Feed,
 newest first. The Rejected lane remains the audit and feedback surface for
@@ -25,7 +25,7 @@ GRADE_PANEL_DAILY = 12
 
 
 st.set_page_config(
-    page_title="Monitor Digest",
+    page_title="The Physical AI Universe",
     page_icon="📡",
     layout="centered",
     initial_sidebar_state="collapsed",
@@ -68,43 +68,88 @@ st.markdown(
     padding-bottom: 3rem;
   }
 
+  .digest-hero {
+    position: relative;
+    overflow: hidden;
+    margin: .2rem 0 .35rem;
+    padding: 1.45rem 1.45rem 1.35rem;
+    border: 1px solid var(--digest-border-soft);
+    border-radius: 18px;
+    background:
+      radial-gradient(circle at 8% 12%, rgba(49, 130, 246, .18), transparent 42%),
+      linear-gradient(135deg, var(--digest-surface-raised), var(--digest-surface) 72%);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, .025),
+      0 18px 46px rgba(0, 0, 0, .2);
+  }
+
+  .digest-hero::after {
+    content: "";
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: 3px;
+    background: linear-gradient(180deg, #6aa7ff, var(--digest-blue));
+  }
+
   .digest-masthead {
+    position: relative;
+    z-index: 1;
     display: flex;
     align-items: center;
-    gap: .7rem;
-    min-height: 44px;
+    gap: 1rem;
   }
 
   .digest-mark {
-    width: 36px;
-    height: 36px;
-    border-radius: 11px;
+    width: 50px;
+    height: 50px;
+    border-radius: 15px;
     display: grid;
     place-items: center;
     flex: 0 0 auto;
     color: #fff;
-    background: var(--digest-blue);
-    font-size: 1rem;
+    background: linear-gradient(145deg, #4591ff, #216bd6);
+    box-shadow:
+      0 0 0 1px rgba(115, 173, 255, .18),
+      0 10px 28px rgba(49, 130, 246, .22);
+    font-size: 1.18rem;
   }
 
   .digest-masthead-copy { min-width: 0; }
 
+  .digest-eyebrow {
+    color: #8fbcff;
+    font-size: .66rem;
+    font-weight: 750;
+    letter-spacing: .14em;
+    line-height: 1.2;
+    margin-bottom: .42rem;
+  }
+
   .digest-masthead h1 {
     color: var(--digest-text);
-    font-size: 1.45rem;
-    font-weight: 700;
-    letter-spacing: -.025em;
-    line-height: 1.15;
+    font-size: clamp(1.9rem, 4vw, 2.35rem);
+    font-weight: 760;
+    letter-spacing: -.045em;
+    line-height: 1.04;
     margin: 0;
+  }
+
+  .digest-subtitle {
+    max-width: 620px;
+    color: var(--digest-text-secondary);
+    font-size: .9rem;
+    line-height: 1.5;
+    margin: .58rem 0 0;
   }
 
   .digest-status {
     display: flex;
     align-items: center;
-    gap: .35rem;
+    gap: .42rem;
+    min-height: 44px;
     color: var(--digest-text-muted);
     font-size: .78rem;
-    margin-top: .2rem;
+    margin: 0;
   }
 
   .digest-status-dot {
@@ -411,8 +456,35 @@ st.markdown(
       padding-right: .7rem;
       padding-top: .85rem;
     }
-    .digest-masthead h1 { font-size: 1.25rem; }
-    .digest-mark { width: 33px; height: 33px; }
+    .digest-hero {
+      margin-top: 0;
+      padding: 1.1rem 1rem 1.05rem;
+      border-radius: 15px;
+    }
+    .digest-masthead {
+      align-items: flex-start;
+      gap: .75rem;
+    }
+    .digest-masthead h1 {
+      font-size: clamp(1.72rem, 8vw, 2rem);
+      line-height: 1.08;
+    }
+    .digest-mark {
+      width: 42px;
+      height: 42px;
+      border-radius: 13px;
+      font-size: 1rem;
+    }
+    .digest-eyebrow {
+      font-size: .61rem;
+      letter-spacing: .11em;
+      margin-bottom: .34rem;
+    }
+    .digest-subtitle {
+      font-size: .82rem;
+      line-height: 1.45;
+      margin-top: .48rem;
+    }
     .edition-head { padding-inline: .8rem; }
     .feed-item {
       grid-template-columns: 35px minmax(0, 1fr);
@@ -837,20 +909,29 @@ status_text = (
     else "Waiting for the first digest"
 )
 
-masthead_col, owner_col = st.columns([5, 1.35], vertical_alignment="center")
-with masthead_col:
+st.markdown(
+    '<section class="digest-hero">'
+    '<div class="digest-masthead">'
+    '<div class="digest-mark" aria-hidden="true">◉</div>'
+    '<div class="digest-masthead-copy">'
+    '<div class="digest-eyebrow">LIVE INTELLIGENCE FEED</div>'
+    '<h1>The Physical AI Universe</h1>'
+    '<p class="digest-subtitle">Your live view of the companies, technologies, and events '
+    'shaping robotics, autonomy, and intelligent infrastructure.</p>'
+    "</div></div></section>",
+    unsafe_allow_html=True,
+)
+
+status_col, owner_col = st.columns([4.35, 1.4], vertical_alignment="center")
+with status_col:
     st.markdown(
-        '<div class="digest-masthead">'
-        '<div class="digest-mark">◉</div>'
-        '<div class="digest-masthead-copy">'
-        '<h1>Monitor Digest</h1>'
-        f'<div class="digest-status"><span class="digest-status-dot"></span>{html.escape(status_text)}</div>'
-        "</div></div>",
+        f'<div class="digest-status"><span class="digest-status-dot"></span>'
+        f'{html.escape(status_text)}</div>',
         unsafe_allow_html=True,
     )
 
 with owner_col:
-    with st.popover("Owner mode"):
+    with st.popover("Owner mode", use_container_width=True):
         st.text_input("Grader PIN", type="password", key="grader_pin")
         st.caption(
             "Use Rate digest or the Rejected grading panel to turn feedback into "
