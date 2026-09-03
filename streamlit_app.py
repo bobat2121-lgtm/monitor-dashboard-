@@ -1,6 +1,6 @@
 """Monitor Digest — tablet-first editorial feed over the digest aggregator.
 
-Data source: GET {WORKER_URL}/digests. Daily and weekly editions are shown
+Data source: GET {WORKER_URL}/digests. Daily editions are shown in the Feed,
 newest first. The Rejected lane remains the audit and feedback surface for
 reviewed items that did not make a digest.
 """
@@ -20,10 +20,8 @@ WORKER_URL = st.secrets.get(
 ET = ZoneInfo("America/New_York")
 
 DAILY_PAGE_SIZE = 10
-WEEKLY_PAGE_SIZE = 8
 REJECTED_PAGE_SIZE = 50
 GRADE_PANEL_DAILY = 12
-GRADE_PANEL_WEEKLY = 8
 
 
 st.set_page_config(
@@ -191,15 +189,6 @@ st.markdown(
     letter-spacing: -.01em;
     line-height: 1.4;
     margin-top: .5rem;
-  }
-
-  .weekly-summary {
-    color: var(--digest-text-secondary);
-    font-size: .88rem;
-    line-height: 1.55;
-    margin-top: .55rem;
-    padding-left: .75rem;
-    border-left: 2px solid var(--digest-blue);
   }
 
   .feed-item {
@@ -566,8 +555,8 @@ def render_items(items) -> str:
     return "".join(rows)
 
 
-def edition_header(post, latest=False, weekly=False) -> str:
-    label = "Weekly synthesis" if weekly else str(post.get("trigger_label") or "Digest")
+def edition_header(post, latest=False) -> str:
+    label = str(post.get("trigger_label") or "Digest")
     posted_at = str(post.get("posted_at") or "")
     item_count = len(post.get("items") or [])
     latest_html = '<span class="latest-badge">LATEST</span>' if latest else ""
@@ -594,20 +583,6 @@ def daily_edition(post, latest=False) -> str:
     return (
         '<section class="feed-edition">'
         f"{edition_header(post, latest=latest)}"
-        f'{render_items(post.get("items") or [])}'
-        "</section>"
-    )
-
-
-def weekly_edition(post, latest=False) -> str:
-    summary = str(post.get("summary") or "").strip()
-    summary_html = (
-        f'<div class="weekly-summary">{html.escape(summary)}</div>' if summary else ""
-    )
-    return (
-        '<section class="feed-edition">'
-        f"{edition_header(post, latest=latest, weekly=True)}"
-        f"{summary_html}"
         f'{render_items(post.get("items") or [])}'
         "</section>"
     )
@@ -837,9 +812,7 @@ except Exception as exc:
     load_error = exc
 
 daily = sort_posts(data.get("daily", []))
-weekly = sort_posts(data.get("weekly", []))
-all_posts = daily + weekly
-latest_post = max(all_posts, key=lambda post: parse_time(post.get("posted_at", "")), default=None)
+latest_post = max(daily, key=lambda post: parse_time(post.get("posted_at", "")), default=None)
 status_text = (
     f"Updated {relative_time(str(latest_post.get('posted_at') or ''))}"
     if latest_post
@@ -873,9 +846,9 @@ if load_error:
     )
     st.stop()
 
-tab_daily, tab_weekly, tab_rejected = st.tabs(["Daily", "Weekly", "Rejected"])
+tab_feed, tab_rejected = st.tabs(["Feed", "Rejected"])
 
-with tab_daily:
+with tab_feed:
     if not daily:
         st.markdown(
             '<div class="empty-state">No digest editions yet — the next run will populate this feed.</div>',
@@ -887,19 +860,6 @@ with tab_daily:
         if index < GRADE_PANEL_DAILY:
             grade_popover("daily", post)
     load_more_button("daily_limit", len(daily), DAILY_PAGE_SIZE, "Load earlier digests")
-
-with tab_weekly:
-    if not weekly:
-        st.markdown(
-            '<div class="empty-state">The first weekly synthesis will appear here.</div>',
-            unsafe_allow_html=True,
-        )
-    weekly_limit = min(int(st.session_state.get("weekly_limit", WEEKLY_PAGE_SIZE)), len(weekly))
-    for index, post in enumerate(weekly[:weekly_limit]):
-        st.markdown(weekly_edition(post, latest=index == 0), unsafe_allow_html=True)
-        if index < GRADE_PANEL_WEEKLY:
-            grade_popover("weekly", post)
-    load_more_button("weekly_limit", len(weekly), WEEKLY_PAGE_SIZE, "Load earlier weeks")
 
 with tab_rejected:
     filter_window, filter_worker, filter_page = st.columns([1, 1.5, 1])
