@@ -170,12 +170,6 @@ st.markdown(
     border-bottom: 1px solid var(--digest-border);
   }
 
-  .latest-edition .edition-head {
-    background:
-      linear-gradient(90deg, rgba(49, 130, 246, .085), transparent 52%),
-      var(--digest-surface-raised);
-  }
-
   .edition-kicker {
     display: flex;
     align-items: center;
