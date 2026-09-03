@@ -191,29 +191,15 @@ st.markdown(
     margin-top: .5rem;
   }
 
-  .feed-row-anchor { display: none; }
-
-  div[data-testid="stVerticalBlockBorderWrapper"]:has(.feed-row-anchor) {
-    padding: .8rem 1rem;
-    background: var(--digest-surface);
-    border: 0;
+  .feed-item {
+    display: grid;
+    grid-template-columns: 40px minmax(0, 1fr);
+    gap: .75rem;
+    padding: .95rem 1rem;
     border-bottom: 1px solid var(--digest-border-soft);
-    border-radius: 0;
   }
 
-  div[data-testid="stVerticalBlockBorderWrapper"]:has(.feed-row-anchor)
-  div[data-testid="stVerticalBlock"] {
-    gap: .15rem;
-  }
-
-  .feed-item-content { min-width: 0; padding-top: .05rem; }
-
-  .vote-rail {
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: .3rem;
-  }
+  .feed-item:last-child { border-bottom: 0; }
 
   .rank-marker {
     width: 34px;
@@ -226,23 +212,6 @@ st.markdown(
     font-size: .78rem;
     font-weight: 700;
     font-variant-numeric: tabular-nums;
-  }
-
-  .vote-status {
-    color: var(--digest-green);
-    font-size: .62rem;
-    font-weight: 650;
-  }
-
-  .vote-status.error { color: var(--digest-orange); }
-
-  div[data-testid="stFeedback"] {
-    margin-top: -.15rem;
-  }
-
-  div[data-testid="stFeedback"] button {
-    min-width: 38px;
-    min-height: 38px;
   }
 
   .feed-copy { min-width: 0; }
@@ -445,8 +414,10 @@ st.markdown(
     .digest-masthead h1 { font-size: 1.25rem; }
     .digest-mark { width: 33px; height: 33px; }
     .edition-head { padding-inline: .8rem; }
-    div[data-testid="stVerticalBlockBorderWrapper"]:has(.feed-row-anchor) {
-      padding: .72rem .8rem;
+    .feed-item {
+      grid-template-columns: 35px minmax(0, 1fr);
+      gap: .58rem;
+      padding: .85rem .8rem;
     }
     .rank-marker { width: 31px; height: 31px; }
     .rejected-item {
@@ -557,39 +528,45 @@ def item_rank_key(item):
         return 10_000
 
 
-def render_item_content(item) -> str:
-    text = html.escape(str(item.get("text", "")))
-    value = item.get("value")
-    url = item.get("url")
-    worker = str(item.get("worker") or "").strip()
-    domain = domain_of(str(url)) if url else ""
+def render_items(items) -> str:
+    rows = []
+    for item in sorted(items or [], key=item_rank_key):
+        rank = html.escape(str(item.get("rank", "–")))
+        text = html.escape(str(item.get("text", "")))
+        value = item.get("value")
+        url = item.get("url")
+        worker = str(item.get("worker") or "").strip()
+        domain = domain_of(str(url)) if url else ""
 
-    metadata = []
-    if worker:
-        metadata.append(f'<span class="feed-worker">{html.escape(worker)}</span>')
-    if domain and domain.lower() != worker.lower():
-        metadata.append(f"<span>{html.escape(domain)}</span>")
-    meta_html = '<span>·</span>'.join(metadata)
+        metadata = []
+        if worker:
+            metadata.append(f'<span class="feed-worker">{html.escape(worker)}</span>')
+        if domain and domain.lower() != worker.lower():
+            metadata.append(f"<span>{html.escape(domain)}</span>")
+        meta_html = '<span>·</span>'.join(metadata)
 
-    badge = (
-        f'<span class="value-badge">{html.escape(str(value))}</span>'
-        if value
-        else ""
-    )
-    link = (
-        f'<a class="source-link" href="{html.escape(str(url), quote=True)}" '
-        f'target="_blank" rel="noopener noreferrer">Read source ↗</a>'
-        if url
-        else '<span class="feed-meta">No source link captured</span>'
-    )
+        badge = (
+            f'<span class="value-badge">{html.escape(str(value))}</span>'
+            if value
+            else ""
+        )
+        link = (
+            f'<a class="source-link" href="{html.escape(str(url), quote=True)}" '
+            f'target="_blank" rel="noopener noreferrer">Read source ↗</a>'
+            if url
+            else '<span class="feed-meta">No source link captured</span>'
+        )
 
-    return (
-        '<article class="feed-item-content">'
-        f'<div class="feed-meta">{meta_html}</div>'
-        f'<div class="feed-text">{text}</div>'
-        f'<div class="feed-meta">{badge}{link}</div>'
-        "</article>"
-    )
+        rows.append(
+            '<article class="feed-item">'
+            f'<div class="rank-marker">{rank}</div>'
+            '<div class="feed-copy">'
+            f'<div class="feed-meta">{meta_html}</div>'
+            f'<div class="feed-text">{text}</div>'
+            f'<div class="feed-meta">{badge}{link}</div>'
+            "</div></article>"
+        )
+    return "".join(rows)
 
 
 def edition_header(post, latest=False) -> str:
@@ -616,10 +593,11 @@ def edition_header(post, latest=False) -> str:
     )
 
 
-def daily_edition_header(post, latest=False) -> str:
+def daily_edition(post, latest=False) -> str:
     return (
         '<section class="feed-edition">'
         f"{edition_header(post, latest=latest)}"
+        f'{render_items(post.get("items") or [])}'
         "</section>"
     )
 
@@ -701,95 +679,6 @@ def handle_grade_response(response, success_message: str):
         st.error(f"Error {response.status_code}: {response.text[:200]}")
 
 
-def submit_item_vote(post_id, rank, vote_key: str):
-    """Submit one feed-item thumb as soon as the feedback widget changes."""
-    selected = st.session_state.get(vote_key)
-    saved_key = f"{vote_key}_saved"
-    error_key = f"{vote_key}_error"
-
-    if selected not in (0, 1):
-        st.session_state.pop(saved_key, None)
-        st.session_state.pop(error_key, None)
-        return
-
-    pin = str(st.session_state.get("grader_pin", "")).strip()
-    if not pin:
-        st.session_state[error_key] = "Set PIN"
-        st.session_state[vote_key] = None
-        return
-
-    try:
-        response = requests.post(
-            f"{WORKER_URL}/grade",
-            json={
-                "pin": pin,
-                "post_type": "daily",
-                "post_id": post_id,
-                "grades": [
-                    {"rank": rank, "verdict": "up" if selected == 1 else "down"}
-                ],
-                "note": "",
-            },
-            timeout=10,
-        )
-        if response.status_code == 200:
-            st.session_state[saved_key] = selected
-            st.session_state.pop(error_key, None)
-        elif response.status_code == 403:
-            st.session_state[error_key] = "Bad PIN"
-            st.session_state[vote_key] = None
-        else:
-            st.session_state[error_key] = f"Error {response.status_code}"
-            st.session_state[vote_key] = None
-    except Exception:
-        st.session_state[error_key] = "Try again"
-        st.session_state[vote_key] = None
-
-
-def render_feed_item(post, item):
-    post_id = post.get("id")
-    rank = item.get("rank")
-    if post_id is None or rank is None:
-        st.markdown(render_item_content(item), unsafe_allow_html=True)
-        return
-
-    vote_key = f"item_vote_{post_id}_{rank}"
-    saved_key = f"{vote_key}_saved"
-    error_key = f"{vote_key}_error"
-    has_pin = bool(str(st.session_state.get("grader_pin", "")).strip())
-
-    with st.container(border=True):
-        st.markdown('<span class="feed-row-anchor"></span>', unsafe_allow_html=True)
-        vote_col, content_col = st.columns(
-            [1.35, 8.65], gap="small", vertical_alignment="top"
-        )
-        with vote_col:
-            st.markdown(
-                '<div class="vote-rail">'
-                f'<div class="rank-marker">{html.escape(str(rank))}</div>'
-                "</div>",
-                unsafe_allow_html=True,
-            )
-            selected = st.feedback(
-                "thumbs",
-                key=vote_key,
-                disabled=not has_pin,
-                on_change=submit_item_vote,
-                args=(post_id, rank, vote_key),
-            )
-            error_text = st.session_state.get(error_key)
-            if error_text:
-                st.markdown(
-                    f'<div class="vote-status error">{html.escape(str(error_text))}</div>',
-                    unsafe_allow_html=True,
-                )
-            elif selected is not None and st.session_state.get(saved_key) == selected:
-                st.markdown('<div class="vote-status">Saved</div>', unsafe_allow_html=True)
-
-        with content_col:
-            st.markdown(render_item_content(item), unsafe_allow_html=True)
-
-
 def grade_popover(post_type, post):
     post_id = post.get("id")
     if post_id is None:
@@ -797,37 +686,48 @@ def grade_popover(post_type, post):
 
     graded = int(post.get("graded") or 0)
     timestamp = fmt_short_time(str(post.get("posted_at") or ""))
-    graded_text = f" · {graded} on file" if graded else ""
-    label = f"Rate digest · {timestamp}{graded_text}"
+    label = f"Rated {graded} · {timestamp}" if graded else f"Rate digest · {timestamp}"
 
     with st.popover(label):
         if not str(st.session_state.get("grader_pin", "")).strip():
             st.caption("Enter the grader PIN in Owner mode at the top of the feed.")
-        st.caption(
-            "The item thumbs submit immediately. Use this field for written context "
-            "that should guide future ranking."
-        )
+
+        for item in sorted(post.get("items") or [], key=item_rank_key):
+            rank = item.get("rank")
+            if rank is None:
+                continue
+            st.radio(
+                f"{rank}. {str(item.get('text', ''))[:96]}",
+                ["–", "👍", "👎"],
+                horizontal=True,
+                key=f"g_{post_type}_{post_id}_{rank}",
+            )
 
         st.text_area(
-            "Written feedback",
+            "Note to the ranking engine (optional)",
             key=f"note_{post_type}_{post_id}",
             placeholder="e.g. item 4 was noise · the Kodiak item deserved #1",
             height=80,
         )
 
-        if st.button(
-            "Submit written feedback",
-            key=f"sub_{post_type}_{post_id}",
-            type="primary",
-        ):
+        if st.button("Submit grades", key=f"sub_{post_type}_{post_id}", type="primary"):
             pin = str(st.session_state.get("grader_pin", "")).strip()
             if not pin:
                 st.warning("Enter the grader PIN in Owner mode first.")
                 return
 
+            grades = []
+            for item in post.get("items") or []:
+                rank = item.get("rank")
+                verdict = st.session_state.get(f"g_{post_type}_{post_id}_{rank}")
+                if verdict == "👍":
+                    grades.append({"rank": rank, "verdict": "up"})
+                elif verdict == "👎":
+                    grades.append({"rank": rank, "verdict": "down"})
+
             note = str(st.session_state.get(f"note_{post_type}_{post_id}", "")).strip()
-            if not note:
-                st.info("Write a note before submitting.")
+            if not grades and not note:
+                st.info("Nothing to submit — rate an item or write a note.")
                 return
 
             try:
@@ -837,14 +737,15 @@ def grade_popover(post_type, post):
                         "pin": pin,
                         "post_type": post_type,
                         "post_id": post_id,
-                        "grades": [],
+                        "grades": grades,
                         "note": note,
                     },
                     timeout=10,
                 )
+                stored = response.json().get("stored", len(grades)) if response.status_code == 200 else 0
                 handle_grade_response(
                     response,
-                    "Written feedback stored — the next digest run will absorb it.",
+                    f"Stored {stored} — the next digest run will absorb the feedback.",
                 )
             except Exception as exc:
                 st.error(f"Could not reach the aggregator: {exc}")
@@ -952,8 +853,8 @@ with owner_col:
     with st.popover("Owner mode"):
         st.text_input("Grader PIN", type="password", key="grader_pin")
         st.caption(
-            "Use the item thumbs, Rate digest notes, or the Rejected grading panel "
-            "to turn feedback into ranking precedents."
+            "Use Rate digest or the Rejected grading panel to turn feedback into "
+            "ranking precedents."
         )
 
 if load_error:
@@ -974,9 +875,7 @@ with tab_feed:
         )
     daily_limit = min(int(st.session_state.get("daily_limit", DAILY_PAGE_SIZE)), len(daily))
     for index, post in enumerate(daily[:daily_limit]):
-        st.markdown(daily_edition_header(post, latest=index == 0), unsafe_allow_html=True)
-        for item in sorted(post.get("items") or [], key=item_rank_key):
-            render_feed_item(post, item)
+        st.markdown(daily_edition(post, latest=index == 0), unsafe_allow_html=True)
         if index < GRADE_PANEL_DAILY:
             grade_popover("daily", post)
     load_more_button("daily_limit", len(daily), DAILY_PAGE_SIZE, "Load earlier digests")
