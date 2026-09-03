@@ -69,77 +69,29 @@ st.markdown(
   }
 
   .digest-hero {
-    position: relative;
-    overflow: hidden;
-    margin: .2rem 0 .35rem;
-    padding: 1.45rem 1.45rem 1.35rem;
-    border: 1px solid var(--digest-border-soft);
-    border-radius: 18px;
-    background:
-      radial-gradient(circle at 8% 12%, rgba(49, 130, 246, .18), transparent 42%),
-      linear-gradient(135deg, var(--digest-surface-raised), var(--digest-surface) 72%);
-    box-shadow:
-      inset 0 1px 0 rgba(255, 255, 255, .025),
-      0 18px 46px rgba(0, 0, 0, .2);
-  }
-
-  .digest-hero::after {
-    content: "";
-    position: absolute;
-    inset: 0 auto 0 0;
-    width: 3px;
-    background: linear-gradient(180deg, #6aa7ff, var(--digest-blue));
-  }
-
-  .digest-masthead {
-    position: relative;
-    z-index: 1;
-    display: flex;
-    align-items: center;
-    gap: 1rem;
-  }
-
-  .digest-mark {
-    width: 50px;
-    height: 50px;
-    border-radius: 15px;
-    display: grid;
-    place-items: center;
-    flex: 0 0 auto;
-    color: #fff;
-    background: linear-gradient(145deg, #4591ff, #216bd6);
-    box-shadow:
-      0 0 0 1px rgba(115, 173, 255, .18),
-      0 10px 28px rgba(49, 130, 246, .22);
-    font-size: 1.18rem;
-  }
-
-  .digest-masthead-copy { min-width: 0; }
-
-  .digest-eyebrow {
-    color: #8fbcff;
-    font-size: .66rem;
-    font-weight: 750;
-    letter-spacing: .14em;
-    line-height: 1.2;
-    margin-bottom: .42rem;
+    margin: .35rem 0 .55rem;
+    padding: .55rem 0 .75rem;
   }
 
   .digest-masthead h1 {
+    display: inline-block;
     color: var(--digest-text);
-    font-size: clamp(1.9rem, 4vw, 2.35rem);
-    font-weight: 760;
-    letter-spacing: -.045em;
-    line-height: 1.04;
+    font-size: clamp(2.25rem, 5vw, 2.9rem);
+    font-weight: 790;
+    letter-spacing: -.055em;
+    line-height: 1.02;
     margin: 0;
   }
 
-  .digest-subtitle {
-    max-width: 620px;
-    color: var(--digest-text-secondary);
-    font-size: .9rem;
-    line-height: 1.5;
-    margin: .58rem 0 0;
+  .digest-masthead h1::after {
+    content: "";
+    display: block;
+    width: 54px;
+    height: 3px;
+    margin-top: .72rem;
+    border-radius: 999px;
+    background: var(--digest-blue);
+    box-shadow: 0 0 18px rgba(49, 130, 246, .28);
   }
 
   .digest-status {
@@ -458,32 +410,15 @@ st.markdown(
     }
     .digest-hero {
       margin-top: 0;
-      padding: 1.1rem 1rem 1.05rem;
-      border-radius: 15px;
-    }
-    .digest-masthead {
-      align-items: flex-start;
-      gap: .75rem;
+      padding: .35rem 0 .6rem;
     }
     .digest-masthead h1 {
-      font-size: clamp(1.72rem, 8vw, 2rem);
-      line-height: 1.08;
+      font-size: clamp(2rem, 9vw, 2.45rem);
+      line-height: 1.05;
     }
-    .digest-mark {
-      width: 42px;
-      height: 42px;
-      border-radius: 13px;
-      font-size: 1rem;
-    }
-    .digest-eyebrow {
-      font-size: .61rem;
-      letter-spacing: .11em;
-      margin-bottom: .34rem;
-    }
-    .digest-subtitle {
-      font-size: .82rem;
-      line-height: 1.45;
-      margin-top: .48rem;
+    .digest-masthead h1::after {
+      width: 46px;
+      margin-top: .58rem;
     }
     .edition-head { padding-inline: .8rem; }
     .feed-item {
@@ -910,15 +845,9 @@ status_text = (
 )
 
 st.markdown(
-    '<section class="digest-hero">'
-    '<div class="digest-masthead">'
-    '<div class="digest-mark" aria-hidden="true">◉</div>'
-    '<div class="digest-masthead-copy">'
-    '<div class="digest-eyebrow">LIVE INTELLIGENCE FEED</div>'
-    '<h1>The Physical AI Universe</h1>'
-    '<p class="digest-subtitle">Your live view of the companies, technologies, and events '
-    'shaping robotics, autonomy, and intelligent infrastructure.</p>'
-    "</div></div></section>",
+    '<header class="digest-hero">'
+    '<div class="digest-masthead"><h1>The Physical AI Universe</h1></div>'
+    "</header>",
     unsafe_allow_html=True,
 )
 
