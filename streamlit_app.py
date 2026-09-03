@@ -81,7 +81,7 @@ st.markdown(
     padding: .55rem 0 .75rem;
   }
 
-  .digest-masthead h1 {
+  .digest-title {
     display: inline-block;
     color: var(--digest-text);
     font-size: clamp(2.25rem, 5vw, 2.9rem);
@@ -91,7 +91,7 @@ st.markdown(
     margin: 0;
   }
 
-  .digest-masthead h1::after {
+  .digest-title::after {
     content: "";
     display: block;
     width: 54px;
@@ -451,11 +451,11 @@ st.markdown(
       margin-top: 0;
       padding: .35rem 0 .6rem;
     }
-    .digest-masthead h1 {
+    .digest-title {
       font-size: clamp(2rem, 9vw, 2.45rem);
       line-height: 1.05;
     }
-    .digest-masthead h1::after {
+    .digest-title::after {
       width: 46px;
       margin-top: .58rem;
     }
@@ -887,7 +887,7 @@ status_text = (
 
 st.markdown(
     '<header class="digest-hero">'
-    '<div class="digest-masthead"><h1>The Physical AI Universe</h1></div>'
+    '<div class="digest-masthead"><div class="digest-title" role="heading" aria-level="1">The Physical AI Universe</div></div>'
     "</header>",
     unsafe_allow_html=True,
 )
