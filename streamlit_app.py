@@ -78,7 +78,7 @@ st.markdown(
 
   .digest-hero {
     margin: .35rem 0 .55rem;
-    padding: .55rem 0 .75rem;
+    padding: 1.55rem 0 .75rem;
   }
 
   .digest-title {
@@ -449,7 +449,7 @@ st.markdown(
     }
     .digest-hero {
       margin-top: 0;
-      padding: .35rem 0 .6rem;
+      padding: 1.2rem 0 .6rem;
     }
     .digest-title {
       font-size: clamp(2rem, 9vw, 2.45rem);
