@@ -35,11 +35,12 @@ st.markdown(
     """
 <style>
   :root {
-    --digest-bg: #050607;
-    --digest-surface: #080a0c;
-    --digest-surface-raised: #0d1013;
-    --digest-border: #20242a;
-    --digest-border-soft: #171a1f;
+    --digest-bg: #070a0f;
+    --digest-surface: #0c1118;
+    --digest-surface-raised: #111821;
+    --digest-surface-hover: #101722;
+    --digest-border: #232b36;
+    --digest-border-soft: #19212b;
     --digest-text: #eef1f4;
     --digest-text-secondary: #b2b9c2;
     --digest-text-muted: #858e99;
@@ -50,15 +51,22 @@ st.markdown(
     --digest-green: #3ddc84;
   }
 
-  html, body, [data-testid="stAppViewContainer"] {
+  html, body {
     background: var(--digest-bg) !important;
     color: var(--digest-text);
     font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont,
       "Segoe UI", sans-serif;
   }
 
+  [data-testid="stAppViewContainer"] {
+    background:
+      radial-gradient(circle at 50% -10%, rgba(49, 130, 246, .09), transparent 31rem),
+      linear-gradient(180deg, #080c12 0%, var(--digest-bg) 35rem) !important;
+    color: var(--digest-text);
+  }
+
   [data-testid="stHeader"] {
-    background: rgba(5, 6, 7, 0.78);
+    background: rgba(7, 10, 15, .8);
     backdrop-filter: blur(14px);
   }
 
@@ -119,7 +127,7 @@ st.markdown(
     display: flex;
     gap: 0;
     margin-top: .35rem;
-    background: rgba(5, 6, 7, .94);
+    background: rgba(7, 10, 15, .94);
     backdrop-filter: blur(14px);
     border-bottom: 1px solid var(--digest-border);
   }
@@ -142,16 +150,30 @@ st.markdown(
 
   .feed-edition {
     overflow: hidden;
-    margin: 0 0 .8rem;
+    margin: 0 0 .9rem;
     background: var(--digest-surface);
-    border-top: 1px solid var(--digest-border);
-    border-bottom: 1px solid var(--digest-border);
+    border: 1px solid var(--digest-border);
+    border-radius: 14px;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, .18);
+  }
+
+  .feed-edition.latest-edition {
+    border-top: 2px solid var(--digest-blue);
+    box-shadow:
+      0 -12px 38px rgba(49, 130, 246, .055),
+      0 18px 40px rgba(0, 0, 0, .24);
   }
 
   .edition-head {
     padding: .85rem 1rem .8rem;
     background: var(--digest-surface-raised);
     border-bottom: 1px solid var(--digest-border);
+  }
+
+  .latest-edition .edition-head {
+    background:
+      linear-gradient(90deg, rgba(49, 130, 246, .085), transparent 52%),
+      var(--digest-surface-raised);
   }
 
   .edition-kicker {
@@ -189,14 +211,27 @@ st.markdown(
   }
 
   .feed-item {
+    position: relative;
     display: grid;
     grid-template-columns: 40px minmax(0, 1fr);
     gap: .75rem;
     padding: .95rem 1rem;
     border-bottom: 1px solid var(--digest-border-soft);
+    transition: background-color .16s ease;
   }
 
+  .feed-item:hover { background: var(--digest-surface-hover); }
   .feed-item:last-child { border-bottom: 0; }
+
+  .feed-item.has-value::before {
+    content: "";
+    position: absolute;
+    inset: .8rem auto .8rem 0;
+    width: 2px;
+    border-radius: 0 999px 999px 0;
+    background: var(--digest-orange);
+    opacity: .72;
+  }
 
   .rank-marker {
     width: 34px;
@@ -209,6 +244,12 @@ st.markdown(
     font-size: .78rem;
     font-weight: 700;
     font-variant-numeric: tabular-nums;
+    transition: color .16s ease, background-color .16s ease;
+  }
+
+  .feed-item:hover .rank-marker {
+    color: #c5ddff;
+    background: rgba(49, 130, 246, .19);
   }
 
   .feed-copy { min-width: 0; }
@@ -282,9 +323,11 @@ st.markdown(
   }
 
   .rejected-feed {
+    overflow: hidden;
     background: var(--digest-surface);
-    border-top: 1px solid var(--digest-border);
-    border-bottom: 1px solid var(--digest-border);
+    border: 1px solid var(--digest-border);
+    border-radius: 14px;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, .16);
   }
 
   .rejected-item {
@@ -293,8 +336,10 @@ st.markdown(
     gap: .75rem;
     padding: .9rem 1rem;
     border-bottom: 1px solid var(--digest-border-soft);
+    transition: background-color .16s ease;
   }
 
+  .rejected-item:hover { background: var(--digest-surface-hover); }
   .rejected-item:last-child { border-bottom: 0; }
 
   .rejected-id {
@@ -564,8 +609,9 @@ def render_items(items) -> str:
             else '<span class="feed-meta">No source link captured</span>'
         )
 
+        item_class = "feed-item has-value" if value else "feed-item"
         rows.append(
-            '<article class="feed-item">'
+            f'<article class="{item_class}">'
             f'<div class="rank-marker">{rank}</div>'
             '<div class="feed-copy">'
             f'<div class="feed-meta">{meta_html}</div>'
@@ -601,8 +647,9 @@ def edition_header(post, latest=False) -> str:
 
 
 def daily_edition(post, latest=False) -> str:
+    edition_class = "feed-edition latest-edition" if latest else "feed-edition"
     return (
-        '<section class="feed-edition">'
+        f'<section class="{edition_class}">'
         f"{edition_header(post, latest=latest)}"
         f'{render_items(post.get("items") or [])}'
         "</section>"
