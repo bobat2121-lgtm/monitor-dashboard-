@@ -23,6 +23,14 @@ from dashboard_utils import (
 )
 
 
+st.set_page_config(
+    page_title="The Physical AI Universe",
+    page_icon="📡",
+    layout="centered",
+    initial_sidebar_state="collapsed",
+)
+
+
 try:
     SECRET_WORKER_URL = st.secrets.get("WORKER_URL")
 except Exception:
@@ -42,13 +50,6 @@ REJECTED_PAGE_SIZE = 50
 REJECTED_FETCH_LIMIT = 500
 GRADE_PANEL_DAILY = 12
 
-
-st.set_page_config(
-    page_title="The Physical AI Universe",
-    page_icon="📡",
-    layout="centered",
-    initial_sidebar_state="collapsed",
-)
 
 st.markdown(
     """

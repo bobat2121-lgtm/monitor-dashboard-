@@ -42,6 +42,7 @@ class PipelineStatusTests(unittest.TestCase):
     def test_quiet_review_is_green(self):
         health = {
             "ok": True,
+            "status": "healthy",
             "unread": 4,
             "staleness": {
                 "lastReview": "2026-09-04T10:00:00Z",
@@ -52,6 +53,33 @@ class PipelineStatusTests(unittest.TestCase):
         status = pipeline_status(health, now=NOW)
         self.assertEqual(status.level, "green")
         self.assertIn("nothing new to publish", status.text)
+
+    def test_backend_degraded_status_cannot_appear_green(self):
+        health = {
+            "ok": True,
+            "status": "degraded",
+            "unread": 4,
+            "staleness": {
+                "lastReview": "2026-09-04T10:00:00Z",
+                "lastOutcome": "published",
+                "lastItemCount": 3,
+            },
+        }
+        status = pipeline_status(health, now=NOW)
+        self.assertEqual(status.level, "amber")
+        self.assertIn("degraded", status.text)
+
+    def test_backend_degraded_status_does_not_hide_stale_review(self):
+        health = {
+            "ok": True,
+            "status": "degraded",
+            "staleness": {
+                "lastReview": "2026-09-02T00:00:00Z",
+                "lastOutcome": "published",
+                "lastItemCount": 3,
+            },
+        }
+        self.assertEqual(pipeline_status(health, now=NOW).level, "red")
 
     def test_delayed_and_stale_reviews_are_not_green(self):
         delayed = {"ok": True, "staleness": {"lastReview": "2026-09-03T16:00:00Z"}}

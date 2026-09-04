@@ -145,7 +145,8 @@ def pipeline_status(
     latest_post_at = (latest_post or {}).get("posted_at")
 
     if health:
-        if health.get("ok") is False:
+        overall_status = str(health.get("status") or "").strip().lower()
+        if health.get("ok") is False or overall_status == "unhealthy":
             return PipelineStatus("red", "Aggregator reports an unhealthy pipeline")
 
         stale = health.get("staleness") or {}
@@ -170,7 +171,7 @@ def pipeline_status(
                 if quiet
                 else "Digest review completed"
             )
-            return _freshness_status(
+            freshness = _freshness_status(
                 review_at,
                 now=clock,
                 healthy_text=healthy,
@@ -178,6 +179,12 @@ def pipeline_status(
                 red_text="Digest review is stale",
                 detail=detail,
             )
+            # Schema-v6 can be reachable (`ok: true`) while the collector is
+            # degraded or a publisher run is still in progress. Degradation is
+            # an amber floor, but it must not hide a genuinely stale red review.
+            if overall_status == "degraded" and freshness.level == "green":
+                return PipelineStatus("amber", "Aggregator reports a degraded pipeline", detail)
+            return freshness
 
         # Compatibility with the pre-v5 health response, where lastPost was the
         # only digest liveness timestamp.
