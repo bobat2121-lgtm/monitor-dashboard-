@@ -6,21 +6,40 @@ reviewed items that did not make a digest.
 """
 
 import html
-from datetime import datetime, timezone
+import os
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
 import requests
 import streamlit as st
 
-
-WORKER_URL = st.secrets.get(
-    "WORKER_URL", "https://digest-aggregator.alatimore06370.workers.dev"
+from dashboard_utils import (
+    MIN_TIME,
+    parse_time,
+    pipeline_status,
+    rejected_time,
+    relative_time,
+    sort_rejected,
 )
+
+
+try:
+    SECRET_WORKER_URL = st.secrets.get("WORKER_URL")
+except Exception:
+    # Streamlit raises when no secrets file exists; local development should
+    # still work with the public default or an ordinary environment variable.
+    SECRET_WORKER_URL = None
+
+WORKER_URL = str(
+    SECRET_WORKER_URL
+    or os.environ.get("WORKER_URL")
+    or "https://digest-aggregator.alatimore06370.workers.dev"
+).rstrip("/")
 ET = ZoneInfo("America/New_York")
 
 DAILY_PAGE_SIZE = 10
 REJECTED_PAGE_SIZE = 50
+REJECTED_FETCH_LIMIT = 500
 GRADE_PANEL_DAILY = 12
 
 
@@ -49,6 +68,8 @@ st.markdown(
     --digest-orange: #ff9a3d;
     --digest-orange-soft: rgba(255, 138, 31, 0.13);
     --digest-green: #3ddc84;
+    --digest-amber: #f5b942;
+    --digest-red: #ff5f65;
   }
 
   html, body {
@@ -116,36 +137,38 @@ st.markdown(
     width: 7px;
     height: 7px;
     border-radius: 50%;
+  }
+
+  .digest-status-dot.status-green {
     background: var(--digest-green);
     box-shadow: 0 0 0 3px rgba(61, 220, 132, .08);
   }
 
-  .stTabs [data-baseweb="tab-list"] {
-    position: sticky;
-    top: 2.85rem;
-    z-index: 20;
+  .digest-status-dot.status-amber {
+    background: var(--digest-amber);
+    box-shadow: 0 0 0 3px rgba(245, 185, 66, .10);
+  }
+
+  .digest-status-dot.status-red {
+    background: var(--digest-red);
+    box-shadow: 0 0 0 3px rgba(255, 95, 101, .10);
+  }
+
+  .st-key-dashboard_view [role="radiogroup"] {
     display: flex;
-    gap: 0;
-    margin-top: .35rem;
-    background: rgba(7, 10, 15, .94);
-    backdrop-filter: blur(14px);
-    border-bottom: 1px solid var(--digest-border);
+    gap: .35rem;
+    padding: .25rem;
+    margin: .35rem 0 .8rem;
+    background: var(--digest-surface);
+    border: 1px solid var(--digest-border);
+    border-radius: 12px;
   }
 
-  .stTabs [data-baseweb="tab"] {
+  .st-key-dashboard_view [role="radiogroup"] > label {
     flex: 1 1 0;
-    min-height: 48px;
     justify-content: center;
-    color: var(--digest-text-muted);
-    background: transparent;
-    font-size: .9rem;
-    font-weight: 600;
-  }
-
-  .stTabs [aria-selected="true"] { color: var(--digest-text) !important; }
-  .stTabs [data-baseweb="tab-highlight"] {
-    height: 2px;
-    background-color: var(--digest-blue) !important;
+    min-height: 40px;
+    border-radius: 9px;
   }
 
   .feed-edition {
@@ -489,72 +512,45 @@ def fetch_digests():
     return response.json()
 
 
+@st.cache_data(ttl=60, show_spinner=False)
+def fetch_health():
+    response = requests.get(f"{WORKER_URL}/health", timeout=10)
+    response.raise_for_status()
+    payload = response.json()
+    if not isinstance(payload, dict):
+        raise ValueError("health response was not an object")
+    return payload
+
+
 @st.cache_data(ttl=120, show_spinner=False)
 def fetch_rejected(days: int):
     response = requests.get(
         f"{WORKER_URL}/rejected",
-        params={"days": days, "limit": 500},
+        params={"days": days, "limit": REJECTED_FETCH_LIMIT},
         timeout=20,
     )
     response.raise_for_status()
     return response.json()
 
 
-def parse_time(iso: str) -> datetime:
-    try:
-        parsed = datetime.fromisoformat(str(iso).replace("Z", "+00:00"))
-        if parsed.tzinfo is None:
-            parsed = parsed.replace(tzinfo=timezone.utc)
-        return parsed.astimezone(timezone.utc)
-    except Exception:
-        return datetime.min.replace(tzinfo=timezone.utc)
-
-
-def fmt_time(iso: str) -> str:
-    parsed = parse_time(iso)
-    if parsed == datetime.min.replace(tzinfo=timezone.utc):
-        return str(iso or "")
+def fmt_time(value) -> str:
+    parsed = parse_time(value)
+    if parsed == MIN_TIME:
+        return "time unavailable" if value == MIN_TIME else str(value or "time unavailable")
     return parsed.astimezone(ET).strftime("%b %-d, %Y · %-I:%M %p ET")
 
 
-def fmt_short_time(iso: str) -> str:
-    parsed = parse_time(iso)
-    if parsed == datetime.min.replace(tzinfo=timezone.utc):
+def fmt_short_time(value) -> str:
+    parsed = parse_time(value)
+    if parsed == MIN_TIME:
         return "digest"
     return parsed.astimezone(ET).strftime("%b %-d · %-I:%M %p")
-
-
-def relative_time(iso: str) -> str:
-    parsed = parse_time(iso)
-    if parsed == datetime.min.replace(tzinfo=timezone.utc):
-        return "time unavailable"
-    seconds = max(0, int((datetime.now(timezone.utc) - parsed).total_seconds()))
-    if seconds < 60:
-        return "just now"
-    minutes = seconds // 60
-    if minutes < 60:
-        return f"{minutes}m ago"
-    hours = minutes // 60
-    if hours < 24:
-        return f"{hours}h ago"
-    days = hours // 24
-    if days < 7:
-        return f"{days}d ago"
-    return fmt_time(iso)
 
 
 def sort_posts(posts):
     return sorted(
         posts or [],
         key=lambda post: parse_time(post.get("posted_at", "")),
-        reverse=True,
-    )
-
-
-def sort_rejected(items):
-    return sorted(
-        items or [],
-        key=lambda item: parse_time(item.get("ts") or item.get("created_at") or ""),
         reverse=True,
     )
 
@@ -696,7 +692,7 @@ def render_rejected(items) -> str:
         title = html.escape(str(item.get("title") or ""))
         url = item.get("canonical_url") or item.get("url")
         worker = html.escape(str(item.get("worker") or ""))
-        item_time = fmt_time(str(item.get("ts") or item.get("created_at") or ""))
+        item_time = fmt_time(rejected_time(item))
         source = (
             f'<a class="source-link" href="{html.escape(str(url), quote=True)}" '
             f'target="_blank" rel="noopener noreferrer">{html.escape(domain_of(str(url)))} ↗</a>'
@@ -870,21 +866,6 @@ def load_more_button(state_key: str, total: int, step: int, label: str):
         st.rerun()
 
 
-load_error = None
-try:
-    data = fetch_digests()
-except Exception as exc:
-    data = {}
-    load_error = exc
-
-daily = sort_posts(data.get("daily", []))
-latest_post = max(daily, key=lambda post: parse_time(post.get("posted_at", "")), default=None)
-status_text = (
-    f"Updated {relative_time(str(latest_post.get('posted_at') or ''))}"
-    if latest_post
-    else "Waiting for the first digest"
-)
-
 st.markdown(
     '<header class="digest-hero">'
     '<div class="digest-masthead"><div class="digest-title" role="heading" aria-level="1">The Physical AI Universe</div></div>'
@@ -892,46 +873,73 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-status_col, owner_col = st.columns([4.35, 1.4], vertical_alignment="center")
-with status_col:
-    st.markdown(
-        f'<div class="digest-status"><span class="digest-status-dot"></span>'
-        f'{html.escape(status_text)}</div>',
-        unsafe_allow_html=True,
-    )
-
-with owner_col:
+def render_owner_panel(health):
     with st.popover("Owner mode", use_container_width=True):
         st.text_input("Grader PIN", type="password", key="grader_pin")
+        st.checkbox(
+            "Load grading controls",
+            key="grading_enabled",
+            help="Off by default so digest item widgets are not built on every refresh.",
+        )
+        if health:
+            stale = health.get("staleness") or {}
+            st.caption(
+                " · ".join(
+                    value
+                    for value in [
+                        f"Schema v{health.get('schema_version')}" if health.get("schema_version") else "",
+                        f"{health.get('unread')} awaiting review" if health.get("unread") is not None else "",
+                        f"Last outcome: {stale.get('lastOutcome')}" if stale.get("lastOutcome") else "",
+                        f"Review boundary: {stale.get('reviewBoundary')}" if stale.get("reviewBoundary") is not None else "",
+                    ]
+                    if value
+                )
+            )
         st.caption(
-            "Use Rate digest or the Rejected grading panel to turn feedback into "
-            "ranking precedents."
+            "Enable grading only when needed, then use Rate digest or the "
+            "Rejected grading panel to create ranking feedback."
         )
 
-if load_error:
-    st.markdown(
-        '<div class="empty-state">Could not reach the aggregator.<br>'
-        f"<code>{html.escape(str(load_error))}</code></div>",
-        unsafe_allow_html=True,
-    )
-    st.stop()
 
-tab_feed, tab_rejected = st.tabs(["Feed", "Rejected"])
-
-with tab_feed:
+def render_feed(data):
+    daily = sort_posts((data or {}).get("daily", []))
     if not daily:
         st.markdown(
             '<div class="empty-state">No digest editions yet — the next run will populate this feed.</div>',
             unsafe_allow_html=True,
         )
+        return
+
     daily_limit = min(int(st.session_state.get("daily_limit", DAILY_PAGE_SIZE)), len(daily))
     for index, post in enumerate(daily[:daily_limit]):
         st.markdown(daily_edition(post, latest=index == 0), unsafe_allow_html=True)
-        if index < GRADE_PANEL_DAILY:
+        if st.session_state.get("grading_enabled") and index < GRADE_PANEL_DAILY:
             grade_popover("daily", post)
     load_more_button("daily_limit", len(daily), DAILY_PAGE_SIZE, "Load earlier digests")
 
-with tab_rejected:
+
+def render_prefilter_kills(items):
+    if not items:
+        return
+    with st.expander(f"Prefilter kills ({len(items)})"):
+        rows = []
+        for item in items:
+            rows.append(
+                '<article class="rejected-item">'
+                f'<div class="rejected-id">#{html.escape(str(item.get("id") or "–"))}</div>'
+                '<div>'
+                f'<div class="rejected-title">{html.escape(str(item.get("title") or ""))}</div>'
+                f'<div class="rejected-meta">{html.escape(str(item.get("worker") or ""))} · '
+                f'{html.escape(str(item.get("rule") or ""))}</div>'
+                "</div></article>"
+            )
+        st.markdown(
+            f'<div class="rejected-feed">{"".join(rows)}</div>',
+            unsafe_allow_html=True,
+        )
+
+
+def render_rejected_view():
     filter_window, filter_worker, filter_page = st.columns([1, 1.5, 1])
     with filter_window:
         days = st.selectbox(
@@ -944,81 +952,134 @@ with tab_rejected:
     try:
         rejected = fetch_rejected(days)
     except Exception as exc:
-        rejected = None
         st.markdown(
             '<div class="empty-state">Could not load rejected items.<br>'
             f"<code>{html.escape(str(exc))}</code></div>",
             unsafe_allow_html=True,
         )
+        return
 
-    if rejected:
-        rejected_items = sort_rejected(rejected.get("items", []))
-        workers = sorted(
-            {str(item.get("worker")) for item in rejected_items if item.get("worker")}
+    raw_items = sort_rejected(rejected.get("items", []))
+    rejected_items = raw_items
+    workers = sorted({str(item.get("worker")) for item in raw_items if item.get("worker")})
+    with filter_worker:
+        selected_worker = st.selectbox("Worker", ["All workers"] + workers)
+    if selected_worker != "All workers":
+        rejected_items = [item for item in raw_items if item.get("worker") == selected_worker]
+
+    page_count = max(1, (len(rejected_items) + REJECTED_PAGE_SIZE - 1) // REJECTED_PAGE_SIZE)
+    with filter_page:
+        page_number = st.selectbox(
+            "Page",
+            range(1, page_count + 1),
+            format_func=lambda value: f"{value} of {page_count} loaded",
+            key=f"rejected_page_{days}_{selected_worker}",
         )
-        with filter_worker:
-            selected_worker = st.selectbox("Worker", ["All workers"] + workers)
-        if selected_worker != "All workers":
-            rejected_items = [
-                item for item in rejected_items if item.get("worker") == selected_worker
-            ]
 
-        page_count = max(1, (len(rejected_items) + REJECTED_PAGE_SIZE - 1) // REJECTED_PAGE_SIZE)
-        with filter_page:
-            page_number = st.selectbox(
-                "Page",
-                range(1, page_count + 1),
-                format_func=lambda value: f"{value} of {page_count}",
-                key=f"rejected_page_{days}_{selected_worker}",
-            )
+    page_start = (page_number - 1) * REJECTED_PAGE_SIZE
+    page_items = rejected_items[page_start : page_start + REJECTED_PAGE_SIZE]
+    showing_start = page_start + 1 if page_items else 0
+    showing_end = page_start + len(page_items)
 
-        page_start = (page_number - 1) * REJECTED_PAGE_SIZE
-        page_items = rejected_items[page_start : page_start + REJECTED_PAGE_SIZE]
-        showing_start = page_start + 1 if page_items else 0
-        showing_end = page_start + len(page_items)
+    reported_total = rejected.get("total")
+    total_is_authoritative = isinstance(reported_total, int) and selected_worker == "All workers"
+    if total_is_authoritative:
+        count_text = f"{reported_total} total"
+    else:
+        count_text = f"{len(rejected_items)} loaded"
+    cap_note = ""
+    if len(raw_items) >= REJECTED_FETCH_LIMIT and not total_is_authoritative:
+        cap_note = f" · API cap reached at {REJECTED_FETCH_LIMIT}; more may exist"
 
+    st.markdown(
+        '<div class="rejected-summary">'
+        f"Showing {showing_start}–{showing_end} of {count_text} rejected items · newest first"
+        f"{cap_note}</div>",
+        unsafe_allow_html=True,
+    )
+
+    if st.session_state.get("grading_enabled"):
+        rejected_grading_panel(page_items, f"{days}_{selected_worker}_{page_number}")
+
+    if not page_items:
         st.markdown(
-            '<div class="rejected-summary">'
-            f"Showing {showing_start}–{showing_end} of {len(rejected_items)} rejected items · newest first"
-            "</div>",
+            '<div class="empty-state">Nothing rejected in this loaded window.</div>',
             unsafe_allow_html=True,
         )
-        rejected_grading_panel(
-            page_items,
-            f"{days}_{selected_worker}_{page_number}",
-        )
+    else:
+        st.markdown(render_rejected(page_items), unsafe_allow_html=True)
 
-        if not page_items:
+    render_prefilter_kills(rejected.get("prefilter_kills", []))
+
+
+@st.fragment(run_every=120)
+def render_dashboard():
+    health = None
+    health_error = None
+    try:
+        health = fetch_health()
+    except Exception as exc:
+        health_error = exc
+
+    # /health may not exist on an older aggregator. Load the digest feed only
+    # in that fallback case so the status can still show useful recency.
+    fallback_data = None
+    latest_post = None
+    if health is None:
+        try:
+            fallback_data = fetch_digests()
+            fallback_daily = sort_posts(fallback_data.get("daily", []))
+            latest_post = fallback_daily[0] if fallback_daily else None
+        except Exception:
+            fallback_data = None
+
+    status = pipeline_status(health, latest_post)
+    status_col, owner_col = st.columns([4.35, 1.4], vertical_alignment="center")
+    with status_col:
+        detail = f" · {status.detail}" if status.detail else ""
+        tooltip = f' title="{html.escape(status.detail, quote=True)}"' if status.detail else ""
+        st.markdown(
+            f'<div class="digest-status"{tooltip}>'
+            f'<span class="digest-status-dot status-{status.level}"></span>'
+            f'{html.escape(status.text + detail)}</div>',
+            unsafe_allow_html=True,
+        )
+    with owner_col:
+        render_owner_panel(health)
+
+    view = st.radio(
+        "Dashboard view",
+        ["Feed", "Rejected"],
+        horizontal=True,
+        label_visibility="collapsed",
+        key="dashboard_view",
+    )
+
+    if view == "Feed":
+        try:
+            data = fallback_data if fallback_data is not None else fetch_digests()
+        except Exception as exc:
             st.markdown(
-                '<div class="empty-state">Nothing rejected in this window.</div>',
+                '<div class="empty-state">Could not reach the digest feed.<br>'
+                f"<code>{html.escape(str(exc))}</code></div>",
                 unsafe_allow_html=True,
             )
         else:
-            st.markdown(render_rejected(page_items), unsafe_allow_html=True)
+            render_feed(data)
+    else:
+        render_rejected_view()
 
-        prefilter_kills = rejected.get("prefilter_kills", [])
-        if prefilter_kills:
-            with st.expander(f"Prefilter kills ({len(prefilter_kills)})"):
-                rows = []
-                for item in prefilter_kills:
-                    rows.append(
-                        '<article class="rejected-item">'
-                        f'<div class="rejected-id">#{html.escape(str(item.get("id") or "–"))}</div>'
-                        '<div>'
-                        f'<div class="rejected-title">{html.escape(str(item.get("title") or ""))}</div>'
-                        f'<div class="rejected-meta">{html.escape(str(item.get("worker") or ""))} · '
-                        f'{html.escape(str(item.get("rule") or ""))}</div>'
-                        "</div></article>"
-                    )
-                st.markdown(
-                    f'<div class="rejected-feed">{"".join(rows)}</div>',
-                    unsafe_allow_html=True,
-                )
+    if health_error:
+        st.caption("Pipeline health endpoint unavailable; status is based on the latest loaded digest.")
 
-st.markdown(
-    '<div class="digest-footer">Refreshes every 2 min · '
-    f'<a href="{html.escape(WORKER_URL, quote=True)}/digests" target="_blank" rel="noopener noreferrer">raw digest JSON</a> · '
-    f'<a href="{html.escape(WORKER_URL, quote=True)}/rejected" target="_blank" rel="noopener noreferrer">rejected JSON</a>'
-    "</div>",
-    unsafe_allow_html=True,
-)
+    st.markdown(
+        '<div class="digest-footer">Live view refreshes every 2 min · '
+        f'<a href="{html.escape(WORKER_URL, quote=True)}/health" target="_blank" rel="noopener noreferrer">pipeline health</a> · '
+        f'<a href="{html.escape(WORKER_URL, quote=True)}/digests" target="_blank" rel="noopener noreferrer">raw digest JSON</a> · '
+        f'<a href="{html.escape(WORKER_URL, quote=True)}/rejected" target="_blank" rel="noopener noreferrer">rejected JSON</a>'
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+
+render_dashboard()
