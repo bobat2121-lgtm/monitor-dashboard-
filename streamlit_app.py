@@ -156,8 +156,11 @@ st.markdown(
   }
 
   .st-key-dashboard_view [role="radiogroup"] {
-    display: flex;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: .35rem;
+    width: min(100%, 16.25rem);
+    box-sizing: border-box;
     padding: .25rem;
     margin: .35rem 0 .8rem;
     background: var(--digest-surface);
@@ -166,10 +169,19 @@ st.markdown(
   }
 
   .st-key-dashboard_view [role="radiogroup"] > label {
-    flex: 1 1 0;
+    width: 100%;
+    min-width: 0;
+    margin: 0 !important;
     justify-content: center;
+    white-space: nowrap;
     min-height: 40px;
     border-radius: 9px;
+  }
+
+  .st-key-dashboard_view [role="radiogroup"] > label p {
+    white-space: nowrap;
+    overflow-wrap: normal;
+    word-break: normal;
   }
 
   .feed-edition {
@@ -284,12 +296,23 @@ st.markdown(
 
   .feed-worker { color: var(--digest-text-secondary); }
 
+  .feed-item-headline {
+    color: var(--digest-text);
+    font-size: .94rem;
+    font-weight: 700;
+    letter-spacing: -.01em;
+    line-height: 1.35;
+    margin: .32rem 0 .12rem;
+  }
+
   .feed-text {
     color: #dce1e6;
     font-size: .9rem;
     line-height: 1.5;
     margin: .33rem 0 .48rem;
   }
+
+  .feed-item-headline + .feed-text { margin-top: .12rem; }
 
   .value-badge {
     display: inline-flex;
@@ -576,6 +599,7 @@ def render_items(items) -> str:
     for item in sorted(items or [], key=item_rank_key):
         rank = html.escape(str(item.get("rank", "–")))
         text = html.escape(str(item.get("text", "")))
+        item_headline = str(item.get("headline") or "").strip()
         value = item.get("value")
         url = item.get("url")
         worker = str(item.get("worker") or "").strip()
@@ -593,6 +617,11 @@ def render_items(items) -> str:
             if value
             else ""
         )
+        headline_html = (
+            f'<div class="feed-item-headline">{html.escape(item_headline)}</div>'
+            if item_headline
+            else ""
+        )
         link = (
             f'<a class="source-link" href="{html.escape(str(url), quote=True)}" '
             f'target="_blank" rel="noopener noreferrer">Read source ↗</a>'
@@ -606,6 +635,7 @@ def render_items(items) -> str:
             f'<div class="rank-marker">{rank}</div>'
             '<div class="feed-copy">'
             f'<div class="feed-meta">{meta_html}</div>'
+            f"{headline_html}"
             f'<div class="feed-text">{text}</div>'
             f'<div class="feed-meta">{badge}{link}</div>'
             "</div></article>"
@@ -741,8 +771,9 @@ def grade_popover(post_type, post):
             rank = item.get("rank")
             if rank is None:
                 continue
+            preview = str(item.get("headline") or item.get("text") or "")
             st.radio(
-                f"{rank}. {str(item.get('text', ''))[:96]}",
+                f"{rank}. {preview[:96]}",
                 ["–", "👍", "👎"],
                 horizontal=True,
                 key=f"g_{post_type}_{post_id}_{rank}",
