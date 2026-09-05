@@ -314,7 +314,55 @@ st.markdown(
     margin: .33rem 0 .48rem;
   }
 
-  .feed-item-headline + .feed-text { margin-top: .12rem; }
+  .feed-details { min-width: 0; }
+
+  .feed-toggle {
+    display: flex;
+    align-items: flex-start;
+    gap: .5rem;
+    min-height: 32px;
+    box-sizing: border-box;
+    margin: .25rem 0 .12rem;
+    padding: .2rem 0;
+    cursor: pointer;
+    list-style: none;
+  }
+
+  .feed-toggle::-webkit-details-marker { display: none; }
+
+  .feed-toggle::before {
+    content: "";
+    flex: 0 0 auto;
+    width: 0;
+    height: 0;
+    margin-top: .32rem;
+    border-top: 5px solid transparent;
+    border-bottom: 5px solid transparent;
+    border-left: 6px solid var(--digest-blue);
+  }
+
+  .feed-details[open] > .feed-toggle::before { transform: rotate(90deg); }
+
+  .feed-toggle:focus-visible {
+    outline: 2px solid var(--digest-blue);
+    outline-offset: 3px;
+    border-radius: 4px;
+  }
+
+  .feed-toggle .feed-item-headline,
+  .feed-summary-label {
+    min-width: 0;
+    margin: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .feed-summary-label {
+    color: var(--digest-text-secondary);
+    font-size: .9rem;
+    line-height: 1.35;
+  }
+
+  .feed-details > .feed-text { margin-top: .12rem; }
 
   .value-badge {
     display: inline-flex;
@@ -622,7 +670,7 @@ def render_items(items) -> str:
         headline_html = (
             f'<div class="feed-item-headline">{html.escape(item_headline)}</div>'
             if item_headline
-            else ""
+            else '<span class="feed-summary-label">Read summary</span>'
         )
         link = (
             f'<a class="source-link" href="{html.escape(str(url), quote=True)}" '
@@ -637,8 +685,11 @@ def render_items(items) -> str:
             f'<div class="rank-marker">{rank}</div>'
             '<div class="feed-copy">'
             f'<div class="feed-meta">{meta_html}</div>'
-            f"{headline_html}"
+            # Native disclosure stays in the browser and starts collapsed.
+            '<details class="feed-details">'
+            f'<summary class="feed-toggle">{headline_html}</summary>'
             f'<div class="feed-text">{text}</div>'
+            '</details>'
             f'<div class="feed-meta">{badge}{link}</div>'
             "</div></article>"
         )
