@@ -1,4 +1,5 @@
 import unittest
+import copy
 from unittest.mock import patch
 from datetime import datetime, timezone, timedelta
 from streamlit.testing.v1 import AppTest
@@ -20,6 +21,36 @@ def by_label(elements, label):
     return next(e for e in elements if e.label == label)
 
 class UniverseTests(unittest.TestCase):
+    def test_relationship_and_government_edits_use_versioned_owner_operations(self):
+        data=copy.deepcopy(DATA)
+        data['matching_revision']='r1'
+        data['registry']['knowledge_nodes']=[{'id':'payload','kind':'product','name':'Example Payload','aliases':['Payload One'],'entity_ids':['example'],'industry_ids':['defense'],'match_mode':'direct','evidence_note':'Company release'}]
+        data['registry']['external_sources']=[{'id':'oira','name':'OIRA','worker':'reg-watcher','endpoint':'https://www.reginfo.gov/','configuration_status':'configured','industry_ids':['defense'],'knowledge_ids':[],'include_terms':[],'exclude_terms':[],'matching_enabled':True}]
+        posted=[]
+        def fetch(url, **kwargs):
+            return StubResponse(data) if url.endswith('/universe') else get(url, **kwargs)
+        def post(url, **kwargs):
+            posted.append(kwargs['json'])
+            return StubResponse({'ok':True,'revision_id':'r2'})
+        with patch('requests.get', side_effect=fetch), patch('requests.post', side_effect=post):
+            app=AppTest.from_file(str(APP_PATH), default_timeout=30)
+            app.session_state['grader_pin']='test-pin'
+            app.run()
+            by_label(app.radio,'Dashboard view').set_value('Universe');app.run()
+            by_label(app.radio,'Universe view').set_value('Relationships');app.run()
+            by_label(app.selectbox,'Edit or add a relationship').set_value('payload');app.run()
+            by_label(app.text_area,'Matchable names (one per line)').set_value('Payload One\nPayload Two')
+            by_label(app.button,'Save relationship').click();app.run()
+            self.assertEqual(list(app.exception),[])
+            self.assertEqual(posted[-1]['operation']['kind'],'knowledge_upsert')
+            self.assertEqual(posted[-1]['operation']['value']['aliases'],['Payload One','Payload Two'])
+            by_label(app.radio,'Universe view').set_value('Government');app.run()
+            by_label(app.text_area,'Additional relevance phrases (one per line)').set_value('Novel program')
+            by_label(app.button,'Save government routing').click();app.run()
+            self.assertEqual(list(app.exception),[])
+            self.assertEqual(posted[-1]['operation']['kind'],'government_source_update')
+            self.assertEqual(posted[-1]['operation']['value']['include_terms'],['Novel program'])
+
     def test_owner_map_source_preview_save_and_history(self):
         posted=[]
         def post(url, **kwargs):

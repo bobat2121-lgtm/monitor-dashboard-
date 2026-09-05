@@ -96,7 +96,7 @@ def wrapped(value, width=24):
     return "<br>".join(html.escape(line) for line in textwrap.wrap(str(value), width))
 
 
-def coverage_figure(data, industry_id=None, entities=None, selected=None):
+def coverage_figure(data, industry_id=None, entities=None, selected=None, connection_kind="Sources"):
     registry = data["registry"]
     nodes, edges = [], []
     entities = entities if entities is not None else registry["entities"]
@@ -118,9 +118,12 @@ def coverage_figure(data, industry_id=None, entities=None, selected=None):
         for i in range(len(lanes)):
             edges.append((nodes[i], nodes[-1]))
         company_node = nodes[-1]
+        if connection_kind != "Sources":
+            sources = [n for n in registry.get("knowledge_nodes", []) if selected["id"] in n["entity_ids"] and n["kind"] == connection_kind]
+            sources = sources[:14]
         for n, source in enumerate(sources):
-            status = source_status(source, data)
-            node = dict(kind="source", id=source["key"], x=3, y=n * 2, color=BLUE if status == "Collecting" else ORANGE,
+            status = source_status(source, data) if connection_kind == "Sources" else source["match_mode"] + " matching"
+            node = dict(kind="source" if connection_kind == "Sources" else "knowledge", id=source["key"] if connection_kind == "Sources" else source["id"], x=3, y=n * 2, color=BLUE if status == "Collecting" else ORANGE,
                         label=wrapped(source["name"], 24) + "<br>" + html.escape(status))
             nodes.append(node)
             edges.append((company_node, node))
@@ -185,11 +188,12 @@ def company_editor(base, pin, data, entity=None):
         chosen = st.multiselect(industries[industry_id]["name"] + " — subindustries", list(sub), default=memberships.get(industry_id, []),
                                 format_func=lambda s, names=sub: names[s], key="company_sub_" + suffix + industry_id)
         new_memberships.append({"industry_id": industry_id, "subindustry_ids": chosen})
+    sec_cik = st.text_input("SEC issuer CIK (optional)", value=(entity or {}).get("sec_cik", ""), max_chars=10, key="company_cik_" + suffix, help="An official SEC issuer CIK enables the separate executive-transaction collector. Leave blank for companies without SEC reporting.")
     notes = st.text_area("What to track", value=(entity or {}).get("tracking_notes", ""), max_chars=4000, key="company_notes_" + suffix)
     if not entity:
         st.caption("New companies join as adjacent comparables. Each company can belong to several industries.")
     if st.button("Save company", key="save_company_" + suffix, type="primary"):
-        value = dict(name=name, aliases=[a.strip() for a in aliases.split(",") if a.strip()], memberships=new_memberships, tracking_notes=notes)
+        value = dict(name=name, aliases=[a.strip() for a in aliases.split(",") if a.strip()], memberships=new_memberships, tracking_notes=notes, sec_cik=sec_cik)
         if entity:
             value["id"] = entity["id"]
         save_change(base, pin, data, {"kind": "entity_upsert", "value": value})
@@ -205,6 +209,10 @@ def source_editor(base, pin, data, source=None):
         st.info("Original source. Its endpoint, polling frequency, and phone delivery are protected. You can update company links and tracking notes.")
     with st.form("source_form_" + suffix):
         ids = st.multiselect("Linked companies", list(entity_names), default=source.get("entity_ids", []), format_func=lambda e: entity_names[e])
+        lane_names = {i["id"]: i["name"] for i in registry["industries"]}
+        knowledge_names = {n["id"]: n["name"] for n in registry.get("knowledge_nodes", [])}
+        lanes = st.multiselect("Source industries (optional)", list(lane_names), default=source.get("industry_ids", []), format_func=lambda x: lane_names[x])
+        knowledge = st.multiselect("Source relationships (optional)", list(knowledge_names), default=source.get("knowledge_ids", []), format_func=lambda x: knowledge_names[x])
         name = st.text_input("Source name", value=source.get("name", ""), disabled=protected)
         endpoint = st.text_input("Newsroom or feed URL", value=source.get("endpoint", ""), disabled=protected, placeholder="https://company.com/news/")
         cols = st.columns(2)
@@ -254,7 +262,7 @@ def source_editor(base, pin, data, source=None):
         if result.get("undated_count"):
             st.caption("Some releases have no publication date. Their observation time will be recorded separately.")
     if save_clicked:
-        value = {"entity_ids": ids, "tracking_notes": notes}
+        value = {"entity_ids": ids, "tracking_notes": notes, "industry_ids": lanes, "knowledge_ids": knowledge}
         if source:
             value["key"] = source["key"]
         proof = None
@@ -288,6 +296,7 @@ def render_universe(base):
         st.success(notice)
     status_col, refresh_col = st.columns([4, 1])
     with status_col:
+        st.caption("Worker matching: " + ("current" if data.get("matching_revision") == data.get("revision_id") else "update pending"))
         st.caption("Ranking brief: " + ("current" if data.get("ranking_published") else "update pending — syncs about every 15 minutes"))
         if data.get("collection_state") != "applied":
             st.caption("Collector configuration is pending; activation will retry automatically.")
@@ -308,7 +317,13 @@ def render_universe(base):
     next_mode = st.session_state.pop("universe_next_mode", None)
     if next_mode:
         st.session_state["universe_mode"] = next_mode
-    mode = st.radio("Universe view", ["Map", "Sources", "History"], horizontal=True, key="universe_mode", label_visibility="collapsed")
+    mode = st.radio("Universe view", ["Map", "Sources", "Relationships", "Government", "History"], horizontal=True, key="universe_mode", label_visibility="collapsed")
+    if mode == "Relationships":
+        render_relationships(base, pin, data)
+        return
+    if mode == "Government":
+        render_government(base, pin, data)
+        return
     if mode == "History":
         try:
             history = api(base, pin, "/history")["revisions"]
@@ -372,7 +387,8 @@ def render_universe(base):
         if sub:
             entities = [e for e in entities if any(m["industry_id"] == industry_id and sub in m["subindustry_ids"] for m in e["memberships"])]
     if query:
-        entities = [e for e in entities if query in " ".join([e["name"], *e["aliases"]]).lower()]
+        related = {eid for n in registry.get("knowledge_nodes", []) if query in " ".join([n["name"], *n["aliases"]]).lower() for eid in n["entity_ids"]}
+        entities = [e for e in entities if e["id"] in related or query in " ".join([e["name"], *e["aliases"]]).lower()]
     if role in ["Covered companies", "Adjacent comparables"]:
         entities = [e for e in entities if e["coverage_role"] == ("covered" if role == "Covered companies" else "adjacent_comparable")]
     if role == "Newsroom gaps":
@@ -385,8 +401,9 @@ def render_universe(base):
         st.session_state["universe_company"] = None
     selected_id = st.selectbox("Company", [None] + list(entity_map), format_func=lambda e: "Choose a company" if e is None else entity_map[e]["name"], key="universe_company")
     selected = entity_map.get(selected_id)
-    chart_key = "coverage_map_" + str(industry_id) + str(selected_id) + query + role + str(st.session_state.get("universe_map_nonce", 0))
-    event = st.plotly_chart(coverage_figure(data, industry_id, entities, selected), use_container_width=True, key=chart_key,
+    connection_kind = st.selectbox("Company connections", ["Sources", "subsidiary", "product", "agency", "program", "regulation"]) if selected else "Sources"
+    chart_key = connection_kind + "coverage_map_" + str(industry_id) + str(selected_id) + query + role + str(st.session_state.get("universe_map_nonce", 0))
+    event = st.plotly_chart(coverage_figure(data, industry_id, entities, selected, connection_kind), use_container_width=True, key=chart_key,
                            on_select="rerun", selection_mode="points", config={"displayModeBar": False, "scrollZoom": False})
     points = (event.get("selection") or {}).get("points", [])
     if points and points[0].get("customdata"):
@@ -396,10 +413,12 @@ def render_universe(base):
             st.session_state["universe_last_click"] = token
             st.session_state["universe_map_nonce"] = st.session_state.get("universe_map_nonce", 0) + 1
             st.session_state["universe_next_" + kind] = ident
+            if kind == "knowledge":
+                st.session_state["universe_next_mode"] = "Relationships"
             if kind == "source":
                 st.session_state["universe_next_mode"] = "Sources"
             st.rerun()
-    st.caption("Select a node to explore. On company and source nodes, cobalt means collecting; orange means coverage needs review.")
+    st.caption("Select a node to explore. Company connections show up to 14 records; Relationships provides the complete searchable list. Government connections describe research exposure.")
     if industry_id and not selected:
         st.caption(f"{len(entities)} matching names. The map shows up to 18 at a time; use search or the company selector to reach every name.")
     if selected:
@@ -413,3 +432,87 @@ def render_universe(base):
             company_editor(base, pin, data, selected)
     with st.expander("Add a company"):
         company_editor(base, pin, data)
+
+
+def render_relationships(base, pin, data):
+    registry = data["registry"]
+    records = registry.get("knowledge_nodes", [])
+    names = {e["id"]: e["name"] for e in registry["entities"]}
+    industries = {i["id"]: i["name"] for i in registry["industries"]}
+    st.caption("Shared records feed the map, ranking brief, and supported worker matchers. Agency and program links provide research context; they do not imply a company award.")
+    cols = st.columns(2)
+    kind_filter = cols[0].selectbox("Record type", ["All", "subsidiary", "product", "agency", "program", "regulation"])
+    query = cols[1].text_input("Find a relationship", key="knowledge_search").lower().strip()
+    visible = [n for n in records if (kind_filter == "All" or n["kind"] == kind_filter) and (not query or query in " ".join([n["name"], *n["aliases"], *[names.get(i, i) for i in n["entity_ids"]]]).lower())]
+    st.dataframe([{"Record": n["name"], "Type": n["kind"], "Companies": ", ".join(names[i] for i in n["entity_ids"]), "Aliases": ", ".join(n["aliases"]), "Matching": n["match_mode"]} for n in visible], hide_index=True, use_container_width=True)
+    lookup = {n["id"]: n for n in records}
+    jump = st.session_state.pop("universe_next_knowledge", None)
+    if jump in lookup:
+        st.session_state["knowledge_selected"] = jump
+    ident = st.selectbox("Edit or add a relationship", [None] + list(lookup), format_func=lambda x: "＋ Add a relationship" if x is None else lookup[x]["kind"] + " · " + lookup[x]["name"], key="knowledge_selected")
+    n = lookup.get(ident, {})
+    suffix = str(ident) + data["revision_id"]
+    with st.form("knowledge_form_" + suffix):
+        kinds = ["subsidiary", "product", "agency", "program", "regulation"]
+        kind = st.selectbox("Relationship type", kinds, index=kinds.index(n.get("kind", "product")))
+        name = st.text_input("Record name", value=n.get("name", ""), max_chars=180)
+        aliases = st.text_area("Matchable names (one per line)", value="\n".join(n.get("aliases", [])))
+        ids = st.multiselect("Related companies", list(names), default=n.get("entity_ids", []), format_func=lambda x: names[x])
+        lane_ids = st.multiselect("Related industries", list(industries), default=n.get("industry_ids", []), format_func=lambda x: industries[x])
+        modes = ["direct", "context", "disabled"]
+        mode = st.selectbox("Matching behavior", modes, index=modes.index(n.get("match_mode", "context")), format_func=lambda x: {"direct": "Company/product identity", "context": "Research context", "disabled": "Reference only"}[x])
+        context = st.text_area("Require one of these context phrases (optional)", value="\n".join(n.get("context_terms", [])))
+        note = st.text_area("Relationship evidence and tracking notes", value=n.get("evidence_note", ""), max_chars=4000)
+        evidence = st.text_input("Evidence URL or source", value=n.get("evidence_source", ""))
+        date = st.text_input("Evidence date", value=n.get("evidence_as_of", ""), placeholder="YYYY-MM-DD")
+        st.caption("Use specific product or legal-entity names. Ambiguous short names require sector context. Agencies, programs and regulations must use Research context or Reference only.")
+        save = st.form_submit_button("Save relationship", type="primary")
+    if save:
+        value = dict(kind=kind, name=name, aliases=aliases.splitlines(), entity_ids=ids, industry_ids=lane_ids, match_mode=mode, context_terms=context.splitlines(), evidence_note=note, evidence_source=evidence, evidence_as_of=date)
+        if ident:
+            value["id"] = ident
+        save_change(base, pin, data, {"kind": "knowledge_upsert", "value": value})
+
+
+def render_government(base, pin, data):
+    registry = data["registry"]
+    sources = registry.get("external_sources", [])
+    industries = {i["id"]: i["name"] for i in registry["industries"]}
+    records = {n["id"]: n for n in registry.get("knowledge_nodes", [])}
+    health = data.get("government_health", [])
+    def last_run(worker):
+        return max([h.get("at", "") for h in health if h.get("trigger_kind", "").startswith(worker)], default="")
+    st.caption("Government collectors share the registry while retaining their existing query budgets and schedules. Configured, credential-dependent and unreconciled sources are shown separately; a catalog entry is not proof of live collection.")
+    st.dataframe([{"Source": s["name"], "Worker": s["worker"], "Configuration": s["configuration_status"].replace("_", " "), "Last recorded run": short_time(last_run(s["worker"])), "URL": s["endpoint"]} for s in sources], hide_index=True, use_container_width=True, column_config={"URL": st.column_config.LinkColumn("URL")})
+    insider = data.get("insider_health") or {}
+    with st.expander("Executive share transactions", expanded=True):
+        cols = st.columns(3)
+        cols[0].metric("SEC issuers", insider.get("issuer_count", 0))
+        cols[1].metric("Filings awaiting parsing", insider.get("pending_count", 0))
+        cols[2].metric("Candidates in latest check", insider.get("emitted", 0))
+        st.caption("Last check: " + short_time(insider.get("last_tick")))
+        if insider.get("last_error"):
+            st.warning(insider["last_error"])
+        elif not insider.get("last_tick") or overdue(insider["last_tick"], 15):
+            st.info("The insider collector is awaiting a recent successful check.")
+        st.caption("Forms 4 and 4/A are parsed for executed executive purchases and sales. Grants, withholding, transfers and director-only trades are retained for audit. ChatGPT assesses trade size using disclosed value, holdings and context; there is no fixed automatic cutoff. First checks establish a baseline.")
+    if not sources:
+        return
+    lookup = {s["id"]: s for s in sources}
+    selected = st.selectbox("Government source routing", list(lookup), format_func=lambda x: lookup[x]["name"])
+    source = lookup[selected]
+    supports_extra = selected in ["federal_register", "oira", "agenda", "congress", "govinfo"]
+    with st.form("government_source_" + selected + data["revision_id"]):
+        lanes = st.multiselect("Industries served", list(industries), default=source["industry_ids"], format_func=lambda x: industries[x])
+        linked = st.multiselect("Agency and program records", list(records), default=source.get("knowledge_ids", []), format_func=lambda x: records[x]["name"])
+        include = st.text_area("Additional relevance phrases (one per line)", value="\n".join(source["include_terms"]), disabled=not supports_extra)
+        if selected == "federal_register":
+            st.caption("Federal Register accepts up to 12 additional search phrases within its existing agency scope.")
+        exclude = st.text_area("Exclude from additional matching (one per line)", value="\n".join(source["exclude_terms"]), disabled=not supports_extra)
+        enabled = st.checkbox("Enable additional relevance matching", value=source.get("matching_enabled", True), disabled=not supports_extra)
+        if not supports_extra:
+            st.caption("Vendor queries follow shared company/subsidiary names. Other cataloged sources retain their existing collector settings.")
+        st.caption("These phrases supplement supported worker matching. Existing legal-status gates, protected source filters, credentials and delivery schedules remain controlled by their collectors.")
+        save = st.form_submit_button("Save government routing", type="primary")
+    if save:
+        save_change(base, pin, data, {"kind": "government_source_update", "value": dict(id=selected, industry_ids=lanes, knowledge_ids=linked, include_terms=include.splitlines(), exclude_terms=exclude.splitlines(), matching_enabled=enabled)})
