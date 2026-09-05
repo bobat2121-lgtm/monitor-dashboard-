@@ -71,7 +71,7 @@ def overdue(value, minutes):
 
 
 def company_status(entity, data):
-    sources = [s for s in data["registry"]["sources"] if entity["id"] in s.get("entity_ids", []) and s.get("source_role") == "company_newsroom"]
+    sources = [s for s in data["registry"]["sources"] if entity["id"] in s.get("entity_ids", []) and s.get("source_role") in {"company_newsroom", "official_customer_partner"}]
     if not sources:
         return "Newsroom gap"
     states = [source_status(s, data) for s in sources]
@@ -189,11 +189,15 @@ def company_editor(base, pin, data, entity=None):
                                 format_func=lambda s, names=sub: names[s], key="company_sub_" + suffix + industry_id)
         new_memberships.append({"industry_id": industry_id, "subindustry_ids": chosen})
     sec_cik = st.text_input("SEC issuer CIK (optional)", value=(entity or {}).get("sec_cik", ""), max_chars=10, key="company_cik_" + suffix, help="An official SEC issuer CIK enables the separate executive-transaction collector. Leave blank for companies without SEC reporting.")
+    with st.expander("Verified government vendor identifiers"):
+        cages = st.text_input("CAGE codes (comma separated)", value=", ".join((entity or {}).get("cage_codes", [])), key="company_cage_" + suffix)
+        ueis = st.text_input("UEI codes (comma separated)", value=", ".join((entity or {}).get("uei_codes", [])), key="company_uei_" + suffix)
+        identity_evidence = st.text_input("Official identity evidence", value=(entity or {}).get("procurement_identity_evidence", ""), key="company_identity_" + suffix, help="Reference the SAM registration or official award that verifies these identifiers for this company.")
     notes = st.text_area("What to track", value=(entity or {}).get("tracking_notes", ""), max_chars=4000, key="company_notes_" + suffix)
     if not entity:
         st.caption("New companies join as adjacent comparables. Each company can belong to several industries.")
     if st.button("Save company", key="save_company_" + suffix, type="primary"):
-        value = dict(name=name, aliases=[a.strip() for a in aliases.split(",") if a.strip()], memberships=new_memberships, tracking_notes=notes, sec_cik=sec_cik)
+        value = dict(name=name, aliases=[a.strip() for a in aliases.split(",") if a.strip()], memberships=new_memberships, tracking_notes=notes, sec_cik=sec_cik, cage_codes=[x.strip() for x in cages.split(",") if x.strip()], uei_codes=[x.strip() for x in ueis.split(",") if x.strip()], procurement_identity_evidence=identity_evidence)
         if entity:
             value["id"] = entity["id"]
         save_change(base, pin, data, {"kind": "entity_upsert", "value": value})
@@ -433,6 +437,11 @@ def render_universe(base):
     if industry_id and not selected:
         st.caption(f"{len(entities)} matching names. The map shows up to 18 at a time; use search or the company selector to reach every name.")
     if selected:
+        verification = selected.get("newsroom_discovery") or {}
+        if verification:
+            st.caption("Newsroom check: " + verification.get("status", "not checked").replace("_", " ") + " · " + short_time(verification.get("checked_at")))
+            if verification.get("note"):
+                st.info(verification["note"])
         candidates = selected.get("source_candidates", [])
         if candidates:
             with st.expander("Candidate newsrooms"):
@@ -493,8 +502,50 @@ def render_government(base, pin, data):
     health = data.get("government_health", [])
     def last_run(worker):
         return max([h.get("at", "") for h in health if h.get("trigger_kind", "").startswith(worker)], default="")
-    st.caption("Government collectors share the registry while retaining their existing query budgets and schedules. Configured, credential-dependent and unreconciled sources are shown separately; a catalog entry is not proof of live collection.")
+    st.caption("Government collectors use the shared company, subsidiary and program registry. Procurement queries rotate under fixed daily request limits. A catalog entry is not proof of a successful source check.")
     st.dataframe([{"Source": s["name"], "Worker": s["worker"], "Configuration": s["configuration_status"].replace("_", " "), "Last recorded run": short_time(last_run(s["worker"])), "URL": s["endpoint"]} for s in sources], hide_index=True, use_container_width=True, column_config={"URL": st.column_config.LinkColumn("URL")})
+    with st.expander("Collection capacity and recovery", expanded=True):
+        for h in sorted(health, key=lambda row: row.get("at", ""), reverse=True):
+            try:
+                note = json.loads(h.get("note") or "{}")
+            except (ValueError, TypeError):
+                continue
+            worker = h.get("trigger_kind", "")
+            if worker == "contracts-watcher:grouped":
+                cols = st.columns(3)
+                cols[0].metric("Procurement companies", note.get("entity_count", 0))
+                cols[1].metric("Provider query groups", note.get("query_groups", 0))
+                cols[2].metric("Pages in latest run", note.get("pages_completed", 0))
+                st.caption("Procurement checked " + short_time(h.get("at")) + "; oldest search window: " + str(note.get("oldest_window_start") or "unknown"))
+                st.write("Daily request ceilings", note.get("provider_limits", {}))
+                if note.get("sam_awards") == "missing_credential":
+                    st.info("SAM Contract Awards API needs a SAM_API_KEY in contracts-watcher. SAM opportunity CSV collection runs independently.")
+                if note.get("errors"):
+                    st.warning("Provider retries are waiting; affected page checkpoints remain unchanged.")
+                    st.json(note["errors"], expanded=False)
+                if note.get("empty_query_entities"):
+                    st.warning("Add verified legal names or identifiers for: " + ", ".join(note["empty_query_entities"]))
+            elif worker == "sam-bulk-discovery":
+                st.write("SAM opportunity snapshot", f"{note.get('next_offset', 0):,} / {note.get('total', 0):,} records processed")
+                st.caption("Last batch " + short_time(h.get("at")) + ". Each saved snapshot resumes automatically; old notices baseline and irrelevant procurement subjects are filtered.")
+            elif worker == "budget-document-discovery":
+                st.write("Official budget documents", f"{note.get('source_count', 0)} indexes · {note.get('new_or_changed_pending', 0)} pending research · {note.get('documents_awaiting_first_fetch', 0)} queued downloads")
+                st.caption("Document discovery " + short_time(h.get("at")) + ". The existing worldwide Work budget watch verifies spending and lifecycle changes.")
+                failed = [{"Source": key, "Last error": value.get("last_error")} for key, value in note.get("sources", {}).items() if value.get("last_error")]
+                if failed:
+                    st.dataframe(failed, hide_index=True, use_container_width=True)
+        revisions = []
+        for h in health:
+            try:
+                note = json.loads(h.get("note") or "{}")
+            except (ValueError, TypeError):
+                continue
+            revision = note.get("universe_revision")
+            if revision:
+                registry_status = "Current" if revision == data["revision_id"] else "Git registry snapshot " + revision[:8] if len(revision) == 40 else "Earlier revision; refreshes on next check"
+                revisions.append({"Collector": h["trigger_kind"], "Last check": short_time(h.get("at")), "Registry": registry_status})
+        if revisions:
+            st.dataframe(revisions, hide_index=True, use_container_width=True)
     insider = data.get("insider_health") or {}
     with st.expander("Executive share transactions", expanded=True):
         cols = st.columns(3)
