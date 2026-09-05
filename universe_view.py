@@ -237,12 +237,15 @@ def source_editor(base, pin, data, source=None):
         state_options = ["draft", "configured", "paused", "needs_adapter"]
         state = st.selectbox("Collection", state_options, index=state_options.index(source.get("configuration_status", "draft")), disabled=protected,
                              format_func=lambda x: {"draft": "Save as draft", "configured": "Activate collection", "paused": "Pause collection", "needs_adapter": "Needs a custom adapter"}[x])
+        include_terms = st.text_area("Topic filter (optional, one phrase per line)", value="\n".join(source.get("config", {}).get("include_terms", [])), disabled=protected, help="Use for broad customer or partner newsrooms. A release must mention at least one phrase. Leave empty to collect all company updates.")
+        exclude_paths = st.text_area("Exclude sections (optional, one path per line)", value="\n".join(source.get("config", {}).get("exclude_paths", [])), disabled=protected, placeholder="/in-the-news/")
+        st.caption("Company-issued releases and official updates only. External media coverage and ‘in the news’ roundups are excluded.")
         notes = st.text_area("Source notes", value=source.get("tracking_notes", ""), max_chars=2000)
         st.caption("New sources feed the digest. First checks establish a baseline. Public companies: at most 60 minutes; private companies: at most 120; covered companies: 8 minutes.")
         left, right = st.columns(2)
         preview_clicked = left.form_submit_button("Preview releases", disabled=protected)
         save_clicked = right.form_submit_button("Save source", type="primary")
-    inputs = {"endpoint": endpoint.strip(), "adapter": method, "path_prefix": prefix.strip()}
+    inputs = {"endpoint": endpoint.strip(), "adapter": method, "path_prefix": prefix.strip(), "include_terms": [x.strip() for x in include_terms.splitlines() if x.strip()], "exclude_paths": [x.strip() for x in exclude_paths.splitlines() if x.strip()]}
     if preview_clicked:
         with st.spinner("Checking the source and its releases…"):
             try:
@@ -257,6 +260,8 @@ def source_editor(base, pin, data, source=None):
         result = preview["result"]
         st.success(f"Found {result['total_found']} releases. Detected {result['source']['adapter']} collection.")
         st.caption("Collection URL: " + result["source"]["endpoint"])
+        if result.get("excluded"):
+            st.caption("Excluded by source scope: " + ", ".join(f"{key.replace('_', ' ')}: {count}" for key, count in result["excluded"].items()))
         st.dataframe([{"Release": i["title"], "Published": short_time(i.get("published")), "URL": i["url"]} for i in result["items"]],
                      hide_index=True, use_container_width=True, column_config={"URL": st.column_config.LinkColumn("URL")})
         if result.get("undated_count"):
@@ -269,7 +274,7 @@ def source_editor(base, pin, data, source=None):
         if not protected:
             chosen = preview["result"]["source"] if matching else {"endpoint": inputs["endpoint"], "adapter": method, "config": {"path_prefix": prefix.strip()}}
             value.update(name=name, endpoint=chosen["endpoint"], adapter=chosen["adapter"], path_prefix=chosen["config"].get("path_prefix", ""),
-                         companyStatus=company_state, cadence_minutes=int(cadence), source_role=role, configuration_status=state)
+                         companyStatus=company_state, cadence_minutes=int(cadence), source_role=role, configuration_status=state, include_terms=inputs["include_terms"], exclude_paths=inputs["exclude_paths"])
             if matching:
                 proof = preview["result"]["preview_id"]
         save_change(base, pin, data, {"kind": "source_upsert", "value": value}, proof)
@@ -309,6 +314,12 @@ def render_universe(base):
     metrics[1].metric("Tracked names", len(registry["entities"]))
     metrics[2].metric("Configured sources", sum(s["configuration_status"] == "configured" for s in registry["sources"]))
     collector = data.get("collector") or {}
+    active_sources = [s for s in data["registry"]["sources"] if s.get("managed_by") == "universe" and s.get("configuration_status") == "configured"]
+    requested_per_hour = sum(60 / max(8, s.get("cadence_minutes", 120)) for s in active_sources)
+    capacity_per_hour = 60 * collector.get("batch_limit", 6)
+    st.caption(f"Supplemental collection: {len(active_sources)} active sources · {requested_per_hour:.0f} planned checks/hour · capacity {capacity_per_hour}/hour. One source can serve several companies and industries.")
+    if requested_per_hour > capacity_per_hour * .7:
+        st.warning("Collection is approaching capacity. Add another collector partition before expanding much further; all saved names and sources are retained.")
     managed_active = any(s.get("managed_by") == "universe" and s.get("configuration_status") == "configured" for s in registry["sources"])
     if managed_active and (not collector.get("last_tick") or overdue(collector["last_tick"], 5) or collector.get("last_error")):
         st.warning("The supplemental collector has not reported a healthy recent check. Saved sources are retained; refresh to check recovery.")
