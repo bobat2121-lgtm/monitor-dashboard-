@@ -189,7 +189,8 @@ def company_editor(base, pin, data, entity=None):
                                 format_func=lambda s, names=sub: names[s], key="company_sub_" + suffix + industry_id)
         new_memberships.append({"industry_id": industry_id, "subindustry_ids": chosen})
     sec_cik = st.text_input("SEC issuer CIK (optional)", value=(entity or {}).get("sec_cik", ""), max_chars=10, key="company_cik_" + suffix, help="An official SEC issuer CIK enables the separate executive-transaction collector. Leave blank for companies without SEC reporting.")
-    with st.expander("Verified government vendor identifiers"):
+    with st.container():
+        st.caption("Verified government vendor identifiers (optional)")
         cages = st.text_input("CAGE codes (comma separated)", value=", ".join((entity or {}).get("cage_codes", [])), key="company_cage_" + suffix)
         ueis = st.text_input("UEI codes (comma separated)", value=", ".join((entity or {}).get("uei_codes", [])), key="company_uei_" + suffix)
         identity_evidence = st.text_input("Official identity evidence", value=(entity or {}).get("procurement_identity_evidence", ""), key="company_identity_" + suffix, help="Reference the SAM registration or official award that verifies these identifiers for this company.")
