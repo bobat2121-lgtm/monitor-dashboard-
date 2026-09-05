@@ -222,12 +222,12 @@ def source_editor(base, pin, data, source=None):
         endpoint = st.text_input("Newsroom or feed URL", value=source.get("endpoint", ""), disabled=protected, placeholder="https://company.com/news/")
         cols = st.columns(2)
         with cols[0]:
-            methods = ["auto", "rss", "html", "wp_json"]
+            methods = ["auto", "rss", "html", "wp_json", "json"]
             current_method = source.get("adapter", "auto")
             if current_method not in methods:
                 methods.append(current_method)
             method = st.selectbox("Collection method", methods, index=methods.index(current_method), disabled=protected,
-                                  format_func=lambda x: {"auto": "Detect automatically", "rss": "RSS / Atom", "html": "Newsroom links", "wp_json": "WordPress articles"}.get(x, x))
+                                  format_func=lambda x: {"auto": "Detect automatically", "rss": "RSS / Atom", "html": "Newsroom links", "wp_json": "WordPress articles", "json": "Structured articles (JSON)"}.get(x, x))
             prefix = st.text_input("Article path, if needed", value=source.get("config", {}).get("path_prefix", ""), disabled=protected, placeholder="/news/")
         with cols[1]:
             statuses = ["public", "private", "noncompany"]
@@ -250,6 +250,12 @@ def source_editor(base, pin, data, source=None):
             st.caption("Advanced page extraction — use when releases share a page with media coverage. Preview before saving.")
             for field, label in [("item_selector", "Article card selector"), ("title_selector", "Headline selector"), ("link_selector", "Article link selector"), ("category_selector", "Category selector"), ("date_selector", "Publication date selector")]:
                 card_fields[field] = st.text_input(label, value=source.get("config", {}).get(field, ""), disabled=protected, placeholder=".release-card" if field == "item_selector" else "", key=field + suffix).strip()
+            allow_pdf = st.checkbox("Include company-hosted PDF releases", value=source.get("config", {}).get("allow_pdf", False), disabled=protected, help="Collect PDF headlines and links from the selected release cards. Document downloads are handled only when reviewing a selected story.")
+        json_fields = {}
+        with st.expander("Advanced structured feed extraction", expanded=False):
+            st.caption("Use the JSON method for a company article API or embedded article data. Preview to verify titles and company-only categories.")
+            for field, label in [("json_script_id", "Embedded JSON element ID (optional)"), ("json_items_path", "Article array path"), ("json_title_field", "JSON headline field"), ("json_url_field", "JSON URL field"), ("json_date_field", "JSON date field"), ("json_category_field", "JSON category field"), ("json_external_field", "JSON external media flag"), ("json_excerpt_field", "JSON excerpt field")]:
+                json_fields[field] = st.text_input(label, value=source.get("config", {}).get(field, ""), disabled=protected, key=field + suffix).strip()
         st.caption("Company-issued releases and official updates only. External media coverage and ‘in the news’ roundups are excluded.")
         notes = st.text_area("Source notes", value=source.get("tracking_notes", ""), max_chars=2000)
         st.caption("New sources feed the digest. First checks establish a baseline. Public companies: at most 60 minutes; private companies: at most 120; covered companies: 8 minutes.")
@@ -258,6 +264,8 @@ def source_editor(base, pin, data, source=None):
         save_clicked = right.form_submit_button("Save source", type="primary")
     inputs = {"endpoint": endpoint.strip(), "adapter": method, "path_prefix": prefix.strip(), "include_terms": [x.strip() for x in include_terms.splitlines() if x.strip()], "exclude_paths": [x.strip() for x in exclude_paths.splitlines() if x.strip()]}
     inputs.update(card_fields)
+    inputs.update(json_fields)
+    inputs["allow_pdf"] = allow_pdf
     inputs["include_categories"] = [x.strip() for x in include_categories.splitlines() if x.strip()]
     if preview_clicked:
         with st.spinner("Checking the source and its releases…"):
@@ -288,7 +296,8 @@ def source_editor(base, pin, data, source=None):
             chosen = preview["result"]["source"] if matching else {"endpoint": inputs["endpoint"], "adapter": method, "config": {"path_prefix": prefix.strip()}}
             value.update(name=name, endpoint=chosen["endpoint"], adapter=chosen["adapter"], path_prefix=chosen["config"].get("path_prefix", ""),
                          companyStatus=company_state, cadence_minutes=int(cadence), source_role=role, configuration_status=state, include_terms=inputs["include_terms"], exclude_paths=inputs["exclude_paths"])
-            value.update(card_fields, include_categories=inputs["include_categories"])
+            value.update(json_fields)
+            value.update(card_fields, include_categories=inputs["include_categories"], allow_pdf=inputs["allow_pdf"])
             if matching:
                 proof = preview["result"]["preview_id"]
         save_change(base, pin, data, {"kind": "source_upsert", "value": value}, proof)
