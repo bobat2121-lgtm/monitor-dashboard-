@@ -13,6 +13,8 @@ from zoneinfo import ZoneInfo
 import requests
 import streamlit as st
 
+from universe_view import render_universe
+
 from dashboard_utils import (
     MIN_TIME,
     parse_time,
@@ -1044,8 +1046,7 @@ def render_rejected_view():
     render_prefilter_kills(rejected.get("prefilter_kills", []))
 
 
-@st.fragment(run_every=120)
-def render_dashboard():
+def render_dashboard(view):
     health = None
     health_error = None
     try:
@@ -1079,14 +1080,6 @@ def render_dashboard():
     with owner_col:
         render_owner_panel(health)
 
-    view = st.radio(
-        "Dashboard view",
-        ["Feed", "Rejected"],
-        horizontal=True,
-        label_visibility="collapsed",
-        key="dashboard_view",
-    )
-
     if view == "Feed":
         try:
             data = fallback_data if fallback_data is not None else fetch_digests()
@@ -1098,8 +1091,10 @@ def render_dashboard():
             )
         else:
             render_feed(data)
-    else:
+    elif view == "Rejected":
         render_rejected_view()
+    else:
+        render_universe(WORKER_URL)
 
     if health_error:
         st.caption("Pipeline health endpoint unavailable; status is based on the latest loaded digest.")
@@ -1114,4 +1109,17 @@ def render_dashboard():
     )
 
 
-render_dashboard()
+@st.fragment(run_every=120)
+def render_live_dashboard(view):
+    render_dashboard(view)
+
+
+view = st.radio(
+    "Dashboard view", ["Feed", "Rejected", "Universe"], horizontal=True,
+    label_visibility="collapsed", key="dashboard_view",
+)
+# Owner editing has no periodic rerun: unsaved form values remain stable.
+if view == "Universe":
+    render_dashboard(view)
+else:
+    render_live_dashboard(view)
