@@ -40,7 +40,7 @@ html, body, button, input, textarea, [data-testid="stAppViewContainer"] {
 .brand-ai { color:var(--digest-blue); }
 .brand-terminal { width:7px; height:7px; background:var(--digest-orange); align-self:flex-start; margin-top:3px; }
 .brand-universe { margin:9px 0 0 32px; font:11px/1 var(--font-mono); letter-spacing:6px; color:#b8c2d2; }
-[data-testid="stHorizontalBlock"]:has([aria-label="Dashboard view"]) { flex-wrap:nowrap !important; align-items:center; gap:8px; padding-bottom:10px; margin-bottom:8px; border-bottom:1px solid var(--digest-border); }
+[data-testid="stHorizontalBlock"]:has([aria-label="Dashboard view"]) { flex-wrap:nowrap !important; align-items:center; gap:8px; padding-block:10px; margin-bottom:8px; border-bottom:1px solid var(--digest-border); }
 [data-testid="stHorizontalBlock"]:has([aria-label="Dashboard view"]) > [data-testid="stColumn"] { min-width:0 !important; }
 [data-testid="stHorizontalBlock"]:has([aria-label="Dashboard view"]) > [data-testid="stColumn"]:first-child { flex:3 1 0 !important; }
 [data-testid="stHorizontalBlock"]:has([aria-label="Dashboard view"]) > [data-testid="stColumn"]:not(:first-child) { flex:1 1 0 !important; width:auto !important; }
