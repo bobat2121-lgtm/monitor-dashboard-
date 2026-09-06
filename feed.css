@@ -42,20 +42,22 @@ html, body, button, input, textarea, [data-testid="stAppViewContainer"] {
 .brand-universe { margin:9px 0 0 32px; font:11px/1 var(--font-mono); letter-spacing:6px; color:#b8c2d2; }
 [data-testid="stHorizontalBlock"]:has([aria-label="Dashboard view"]) { flex-wrap:nowrap !important; align-items:center; gap:8px; padding-bottom:10px; margin-bottom:8px; border-bottom:1px solid var(--digest-border); }
 [data-testid="stHorizontalBlock"]:has([aria-label="Dashboard view"]) > [data-testid="stColumn"] { min-width:0 !important; }
-[data-testid="stHorizontalBlock"]:has([aria-label="Dashboard view"]) > [data-testid="stColumn"]:first-child { flex:1 1 0 !important; }
-[data-testid="stHorizontalBlock"]:has([aria-label="Dashboard view"]) > [data-testid="stColumn"]:not(:first-child) { flex:0 0 72px !important; width:72px !important; }
-[data-testid="stHorizontalBlock"]:has([aria-label="Dashboard view"]) [data-testid="stPopover"] > button { padding:0 9px; }
+[data-testid="stHorizontalBlock"]:has([aria-label="Dashboard view"]) > [data-testid="stColumn"]:first-child { flex:3 1 0 !important; }
+[data-testid="stHorizontalBlock"]:has([aria-label="Dashboard view"]) > [data-testid="stColumn"]:not(:first-child) { flex:1 1 0 !important; width:auto !important; }
+[data-testid="stHorizontalBlock"]:has([aria-label="Dashboard view"]) [data-testid="stPopover"] > button { display:flex; align-items:center; justify-content:center; width:100%; height:44px; padding:0 9px; text-align:center; }
 [data-testid="stHorizontalBlock"]:has([aria-label="Dashboard view"]) [data-testid="stPopoverButton"] [aria-hidden="true"] { display:none; }
 [data-testid="stHorizontalBlock"]:has([aria-label="Dashboard view"]) [data-testid="stPopover"] > button > svg { display:none; }
 [data-testid="stRadio"]:has([aria-label="Dashboard view"]) { width:100% !important; }
+[data-testid="stElementContainer"]:has(> [data-testid="stRadio"] [aria-label="Dashboard view"]) { width:100% !important; align-self:stretch; }
 [role="radiogroup"][aria-label="Dashboard view"] [data-testid="stRadioOption"] > div > div > div:not([data-testid]) { display:none; }
 [role="radiogroup"][aria-label="Dashboard view"] {
-  display:flex; gap:2.3rem; flex-wrap:nowrap; width:100%;
+  display:flex; gap:0; flex-wrap:nowrap; width:100%;
   padding:0; margin:0; border:0;
   background:transparent; border-radius:0;
 }
 [role="radiogroup"][aria-label="Dashboard view"] > label {
-  margin:0 !important; padding:9px 2px 13px; min-height:42px;
+  display:flex; flex:1 1 0; align-items:center; justify-content:center; min-width:0; box-sizing:border-box; text-align:center;
+  margin:0 !important; padding:0 8px; height:44px;
   border-bottom:2px solid transparent; border-radius:0; gap:0;
 }
 [role="radiogroup"][aria-label="Dashboard view"] > label:has(input:checked) {
@@ -88,8 +90,8 @@ html, body, button, input, textarea, [data-testid="stAppViewContainer"] {
 .feed-copy { min-width:0; }
 .feed-meta { display:flex; align-items:center; flex-wrap:wrap; gap:9px; color:var(--digest-text-muted); font:10px/1.5 var(--font-mono); }
 .feed-worker { color:#a5b4cb; text-transform:uppercase; letter-spacing:.5px; }
-.feed-item-headline { color:var(--digest-text); font-size:15px; font-weight:600; letter-spacing:-.1px; line-height:1.5; }
-.feed-text { color:var(--digest-text-secondary); font-size:14px; line-height:1.8; margin:10px 0 15px; white-space:pre-line; max-width:82ch; }
+.feed-item-headline { color:var(--digest-text); font-size:18px; font-weight:600; letter-spacing:-.1px; line-height:1.5; }
+.feed-text { color:var(--digest-text-secondary); font-size:16px; line-height:1.8; margin:10px 0 15px; white-space:pre-line; width:100%; max-width:none; overflow-wrap:anywhere; }
 .feed-details { min-width:0; }
 .feed-toggle { display:flex; align-items:flex-start; gap:14px; min-height:44px; padding:8px 0 12px; cursor:pointer; list-style:none; }
 .feed-toggle::-webkit-details-marker { display:none; }
@@ -133,10 +135,9 @@ html, body, button, input, textarea, [data-testid="stAppViewContainer"] {
   .edition-head { padding:19px; }
   .feed-item { padding:19px; gap:10px; grid-template-columns:23px minmax(0,1fr); }
   .edition-kicker { gap:6px; font-size:9px; }
-  .feed-item-headline { font-size:15px; }
   .rejected-item { grid-template-columns:42px minmax(0,1fr); padding:17px; gap:10px; }
-  [role="radiogroup"][aria-label="Dashboard view"] { gap:1rem; }
+  [role="radiogroup"][aria-label="Dashboard view"] > label { padding-inline:2px; }
   [role="radiogroup"][aria-label="Dashboard view"] label p { font-size:11px; }
-  [data-testid="stHorizontalBlock"]:has([aria-label="Dashboard view"]) > [data-testid="stColumn"]:not(:first-child) { flex-basis:62px !important; width:62px !important; }
+  [data-testid="stHorizontalBlock"]:has([aria-label="Dashboard view"]) [data-testid="stPopover"] > button { padding-inline:4px; }
 }
 @media (prefers-reduced-motion:reduce) { *, *::before, *::after { animation:none !important; transition:none !important; scroll-behavior:auto !important; } }
