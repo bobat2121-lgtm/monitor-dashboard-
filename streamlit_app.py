@@ -7,6 +7,7 @@ reviewed items that did not make a digest.
 
 import html
 import os
+from pathlib import Path
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
@@ -18,7 +19,6 @@ from universe_view import render_universe
 from dashboard_utils import (
     MIN_TIME,
     parse_time,
-    pipeline_status,
     rejected_time,
     relative_time,
     sort_rejected,
@@ -27,8 +27,8 @@ from dashboard_utils import (
 
 st.set_page_config(
     page_title="The Physical AI Universe",
-    page_icon="📡",
-    layout="centered",
+    page_icon="◈",
+    layout="wide",
     initial_sidebar_state="collapsed",
 )
 
@@ -54,527 +54,7 @@ GRADE_PANEL_DAILY = 12
 
 
 st.markdown(
-    """
-<style>
-  :root {
-    --digest-bg: #070a0f;
-    --digest-surface: #0c1118;
-    --digest-surface-raised: #111821;
-    --digest-surface-hover: #101722;
-    --digest-border: #232b36;
-    --digest-border-soft: #19212b;
-    --digest-text: #eef1f4;
-    --digest-text-secondary: #b2b9c2;
-    --digest-text-muted: #858e99;
-    --digest-blue: #3182f6;
-    --digest-blue-soft: rgba(49, 130, 246, 0.13);
-    --digest-orange: #ff9a3d;
-    --digest-orange-soft: rgba(255, 138, 31, 0.13);
-    --digest-green: #3ddc84;
-    --digest-amber: #f5b942;
-    --digest-red: #ff5f65;
-  }
-
-  html, body {
-    background: var(--digest-bg) !important;
-    color: var(--digest-text);
-    font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont,
-      "Segoe UI", sans-serif;
-  }
-
-  [data-testid="stAppViewContainer"] {
-    background:
-      radial-gradient(circle at 50% -10%, rgba(49, 130, 246, .09), transparent 31rem),
-      linear-gradient(180deg, #080c12 0%, var(--digest-bg) 35rem) !important;
-    color: var(--digest-text);
-  }
-
-  [data-testid="stHeader"] {
-    background: rgba(7, 10, 15, .8);
-    backdrop-filter: blur(14px);
-  }
-
-  .block-container {
-    max-width: 820px;
-    padding-top: 1.25rem;
-    padding-bottom: 3rem;
-  }
-
-  .digest-hero {
-    margin: .35rem 0 .55rem;
-    padding: 1.55rem 0 .75rem;
-  }
-
-  .digest-title {
-    display: inline-block;
-    color: var(--digest-text);
-    font-size: clamp(2.25rem, 5vw, 2.9rem);
-    font-weight: 790;
-    letter-spacing: -.055em;
-    line-height: 1.02;
-    margin: 0;
-  }
-
-  .digest-title::after {
-    content: "";
-    display: block;
-    width: 54px;
-    height: 3px;
-    margin-top: .72rem;
-    border-radius: 999px;
-    background: var(--digest-blue);
-    box-shadow: 0 0 18px rgba(49, 130, 246, .28);
-  }
-
-  .digest-status {
-    display: flex;
-    align-items: center;
-    gap: .42rem;
-    min-height: 44px;
-    color: var(--digest-text-muted);
-    font-size: .78rem;
-    margin: 0;
-  }
-
-  .digest-status-dot {
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
-  }
-
-  .digest-status-dot.status-green {
-    background: var(--digest-green);
-    box-shadow: 0 0 0 3px rgba(61, 220, 132, .08);
-  }
-
-  .digest-status-dot.status-amber {
-    background: var(--digest-amber);
-    box-shadow: 0 0 0 3px rgba(245, 185, 66, .10);
-  }
-
-  .digest-status-dot.status-red {
-    background: var(--digest-red);
-    box-shadow: 0 0 0 3px rgba(255, 95, 101, .10);
-  }
-
-  .st-key-dashboard_view [role="radiogroup"] {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: .35rem;
-    width: min(100%, 16.25rem);
-    box-sizing: border-box;
-    padding: .25rem;
-    margin: .35rem 0 .8rem;
-    background: var(--digest-surface);
-    border: 1px solid var(--digest-border);
-    border-radius: 12px;
-  }
-
-  .st-key-dashboard_view [role="radiogroup"] > label {
-    width: 100%;
-    min-width: 0;
-    margin: 0 !important;
-    justify-content: center;
-    white-space: nowrap;
-    min-height: 40px;
-    border-radius: 9px;
-  }
-
-  .st-key-dashboard_view [role="radiogroup"] > label p {
-    white-space: nowrap;
-    overflow-wrap: normal;
-    word-break: normal;
-  }
-
-  .feed-edition {
-    overflow: hidden;
-    margin: 0 0 .9rem;
-    background: var(--digest-surface);
-    border: 1px solid var(--digest-border);
-    border-radius: 14px;
-    box-shadow: 0 12px 32px rgba(0, 0, 0, .18);
-  }
-
-  .feed-edition.latest-edition {
-    border-top: 2px solid var(--digest-blue);
-    box-shadow:
-      0 -12px 38px rgba(49, 130, 246, .055),
-      0 18px 40px rgba(0, 0, 0, .24);
-  }
-
-  .edition-head {
-    padding: .85rem 1rem .8rem;
-    background: var(--digest-surface-raised);
-    border-bottom: 1px solid var(--digest-border);
-  }
-
-  .edition-kicker {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: .42rem;
-    color: var(--digest-text-muted);
-    font-size: .74rem;
-    font-variant-numeric: tabular-nums;
-  }
-
-  .edition-label {
-    color: var(--digest-text-secondary);
-    font-weight: 650;
-  }
-
-  .latest-badge {
-    border-radius: 999px;
-    padding: .13rem .45rem;
-    color: #a9cfff;
-    background: var(--digest-blue-soft);
-    font-size: .66rem;
-    font-weight: 700;
-    letter-spacing: .045em;
-  }
-
-  .edition-headline {
-    color: var(--digest-text);
-    font-size: 1rem;
-    font-weight: 650;
-    letter-spacing: -.01em;
-    line-height: 1.4;
-    margin-top: .5rem;
-  }
-
-  .feed-item {
-    position: relative;
-    display: grid;
-    grid-template-columns: 40px minmax(0, 1fr);
-    gap: .75rem;
-    padding: .95rem 1rem;
-    border-bottom: 1px solid var(--digest-border-soft);
-    transition: background-color .16s ease;
-  }
-
-  .feed-item:hover { background: var(--digest-surface-hover); }
-  .feed-item:last-child { border-bottom: 0; }
-
-  .feed-item.has-value::before {
-    content: "";
-    position: absolute;
-    inset: .8rem auto .8rem 0;
-    width: 2px;
-    border-radius: 0 999px 999px 0;
-    background: var(--digest-orange);
-    opacity: .72;
-  }
-
-  .rank-marker {
-    width: 34px;
-    height: 34px;
-    display: grid;
-    place-items: center;
-    border-radius: 10px;
-    color: #a9cfff;
-    background: var(--digest-blue-soft);
-    font-size: .78rem;
-    font-weight: 700;
-    font-variant-numeric: tabular-nums;
-    transition: color .16s ease, background-color .16s ease;
-  }
-
-  .feed-item:hover .rank-marker {
-    color: #c5ddff;
-    background: rgba(49, 130, 246, .19);
-  }
-
-  .feed-copy { min-width: 0; }
-
-  .feed-meta {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: .35rem;
-    color: var(--digest-text-muted);
-    font-size: .72rem;
-    line-height: 1.35;
-  }
-
-  .feed-worker { color: var(--digest-text-secondary); }
-
-  .feed-item-headline {
-    color: var(--digest-text);
-    font-size: .94rem;
-    font-weight: 700;
-    letter-spacing: -.01em;
-    line-height: 1.35;
-    margin: .32rem 0 .12rem;
-  }
-
-  .feed-text {
-    color: #dce1e6;
-    font-size: .9rem;
-    line-height: 1.5;
-    margin: .33rem 0 .48rem;
-  }
-
-  .feed-details { min-width: 0; }
-
-  .feed-toggle {
-    display: flex;
-    align-items: flex-start;
-    gap: .5rem;
-    min-height: 32px;
-    box-sizing: border-box;
-    margin: .25rem 0 .12rem;
-    padding: .2rem 0;
-    cursor: pointer;
-    list-style: none;
-  }
-
-  .feed-toggle::-webkit-details-marker { display: none; }
-
-  .feed-toggle::before {
-    content: "";
-    flex: 0 0 auto;
-    width: 0;
-    height: 0;
-    margin-top: .32rem;
-    border-top: 5px solid transparent;
-    border-bottom: 5px solid transparent;
-    border-left: 6px solid var(--digest-blue);
-  }
-
-  .feed-details[open] > .feed-toggle::before { transform: rotate(90deg); }
-
-  .feed-toggle:focus-visible {
-    outline: 2px solid var(--digest-blue);
-    outline-offset: 3px;
-    border-radius: 4px;
-  }
-
-  .feed-toggle .feed-item-headline,
-  .feed-summary-label {
-    min-width: 0;
-    margin: 0;
-    overflow-wrap: anywhere;
-  }
-
-  .feed-summary-label {
-    color: var(--digest-text-secondary);
-    font-size: .9rem;
-    line-height: 1.35;
-  }
-
-  .feed-details > .feed-text { margin-top: .12rem; }
-
-  .value-badge {
-    display: inline-flex;
-    align-items: center;
-    min-height: 23px;
-    border-radius: 999px;
-    padding: .08rem .48rem;
-    color: var(--digest-orange);
-    background: var(--digest-orange-soft);
-    font-size: .68rem;
-    font-weight: 700;
-    white-space: nowrap;
-  }
-
-  .source-link {
-    color: #73adff;
-    font-size: .75rem;
-    font-weight: 600;
-    text-decoration: none;
-  }
-
-  .source-link:hover { color: #a9cfff; text-decoration: underline; }
-
-  .empty-state {
-    color: var(--digest-text-muted);
-    text-align: center;
-    padding: 3rem 1rem;
-    font-size: .9rem;
-  }
-
-  .rejected-summary {
-    color: var(--digest-text-muted);
-    font-size: .78rem;
-    margin: .15rem 0 .7rem;
-  }
-
-  .rejected-grader-title {
-    color: var(--digest-text);
-    font-size: .92rem;
-    font-weight: 700;
-    margin-bottom: .12rem;
-  }
-
-  .rejected-grader-copy {
-    color: var(--digest-text-muted);
-    font-size: .74rem;
-    line-height: 1.45;
-    margin-bottom: .35rem;
-  }
-
-  .rejected-feed {
-    overflow: hidden;
-    background: var(--digest-surface);
-    border: 1px solid var(--digest-border);
-    border-radius: 14px;
-    box-shadow: 0 12px 32px rgba(0, 0, 0, .16);
-  }
-
-  .rejected-item {
-    display: grid;
-    grid-template-columns: 58px minmax(0, 1fr);
-    gap: .75rem;
-    padding: .9rem 1rem;
-    border-bottom: 1px solid var(--digest-border-soft);
-    transition: background-color .16s ease;
-  }
-
-  .rejected-item:hover { background: var(--digest-surface-hover); }
-  .rejected-item:last-child { border-bottom: 0; }
-
-  .rejected-id {
-    align-self: start;
-    border-radius: 8px;
-    padding: .23rem .35rem;
-    color: var(--digest-text-secondary);
-    background: var(--digest-surface-raised);
-    border: 1px solid var(--digest-border);
-    font-size: .69rem;
-    font-weight: 700;
-    text-align: center;
-    font-variant-numeric: tabular-nums;
-  }
-
-  .rejected-title {
-    color: #d7dce2;
-    font-size: .86rem;
-    line-height: 1.45;
-  }
-
-  .rejected-meta {
-    color: var(--digest-text-muted);
-    font-size: .69rem;
-    margin-top: .28rem;
-    font-variant-numeric: tabular-nums;
-  }
-
-  .rejected-signals {
-    display: flex;
-    flex-wrap: wrap;
-    gap: .32rem;
-    margin-top: .42rem;
-  }
-
-  .rejected-chip {
-    border-radius: 999px;
-    padding: .1rem .42rem;
-    color: var(--digest-text-secondary);
-    background: var(--digest-surface-raised);
-    border: 1px solid var(--digest-border);
-    font-size: .65rem;
-    font-weight: 650;
-  }
-
-  .rejected-chip.score {
-    color: #a9cfff;
-    background: var(--digest-blue-soft);
-    border-color: rgba(49, 130, 246, .25);
-  }
-
-  .rejected-rationale {
-    margin-top: .45rem;
-    padding-left: .62rem;
-    border-left: 2px solid var(--digest-border);
-    color: var(--digest-text-muted);
-    font-size: .73rem;
-    line-height: 1.5;
-  }
-
-  .rejected-rationale strong {
-    color: var(--digest-text-secondary);
-    font-weight: 650;
-  }
-
-  div[data-testid="stPopover"] > button,
-  div[data-testid="stButton"] > button {
-    min-height: 44px;
-    border-color: var(--digest-border);
-    border-radius: 11px;
-  }
-
-  div[data-testid="stPopover"] > button:hover,
-  div[data-testid="stButton"] > button:hover {
-    border-color: rgba(49, 130, 246, .55);
-    color: #a9cfff;
-  }
-
-  [data-testid="stExpander"] {
-    background: var(--digest-surface) !important;
-    border: 1px solid var(--digest-border) !important;
-    border-radius: 12px !important;
-  }
-
-  [data-testid="stWidgetLabel"] p,
-  [data-testid="stCaptionContainer"] p {
-    color: var(--digest-text-secondary) !important;
-  }
-
-  .digest-footer {
-    margin-top: 1.5rem;
-    color: var(--digest-text-muted);
-    font-size: .72rem;
-    text-align: center;
-  }
-
-  .digest-footer a { color: #73adff; text-decoration: none; }
-  .digest-footer a:hover { text-decoration: underline; }
-
-  @media (max-width: 900px) {
-    .block-container {
-      max-width: 100%;
-      padding-left: 1rem;
-      padding-right: 1rem;
-    }
-  }
-
-  @media (max-width: 600px) {
-    .block-container {
-      padding-left: .7rem;
-      padding-right: .7rem;
-      padding-top: .85rem;
-    }
-    .digest-hero {
-      margin-top: 0;
-      padding: 1.2rem 0 .6rem;
-    }
-    .digest-title {
-      font-size: clamp(2rem, 9vw, 2.45rem);
-      line-height: 1.05;
-    }
-    .digest-title::after {
-      width: 46px;
-      margin-top: .58rem;
-    }
-    .edition-head { padding-inline: .8rem; }
-    .feed-item {
-      grid-template-columns: 35px minmax(0, 1fr);
-      gap: .58rem;
-      padding: .85rem .8rem;
-    }
-    .rank-marker { width: 31px; height: 31px; }
-    .rejected-item {
-      grid-template-columns: 52px minmax(0, 1fr);
-      gap: .58rem;
-      padding-inline: .8rem;
-    }
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    *, *::before, *::after { scroll-behavior: auto !important; }
-  }
-</style>
-""",
+    "<style>" + Path(__file__).with_name("feed.css").read_text(encoding="utf-8") + "</style>",
     unsafe_allow_html=True,
 )
 
@@ -584,16 +64,6 @@ def fetch_digests():
     response = requests.get(f"{WORKER_URL}/digests", timeout=15)
     response.raise_for_status()
     return response.json()
-
-
-@st.cache_data(ttl=60, show_spinner=False)
-def fetch_health():
-    response = requests.get(f"{WORKER_URL}/health", timeout=10)
-    response.raise_for_status()
-    payload = response.json()
-    if not isinstance(payload, dict):
-        raise ValueError("health response was not an object")
-    return payload
 
 
 @st.cache_data(ttl=120, show_spinner=False)
@@ -611,14 +81,16 @@ def fmt_time(value) -> str:
     parsed = parse_time(value)
     if parsed == MIN_TIME:
         return "time unavailable" if value == MIN_TIME else str(value or "time unavailable")
-    return parsed.astimezone(ET).strftime("%b %-d, %Y · %-I:%M %p ET")
+    local = parsed.astimezone(ET)
+    return f"{local:%b} {local.day}, {local.year} · {local.hour % 12 or 12}:{local:%M %p} ET"
 
 
 def fmt_short_time(value) -> str:
     parsed = parse_time(value)
     if parsed == MIN_TIME:
         return "digest"
-    return parsed.astimezone(ET).strftime("%b %-d · %-I:%M %p")
+    local = parsed.astimezone(ET)
+    return f"{local:%b} {local.day} · {local.hour % 12 or 12}:{local:%M %p}"
 
 
 def sort_posts(posts):
@@ -647,7 +119,7 @@ def item_rank_key(item):
 def render_items(items) -> str:
     rows = []
     for item in sorted(items or [], key=item_rank_key):
-        rank = html.escape(str(item.get("rank", "–")))
+        rank = html.escape(str(item.get("rank", "–")).zfill(2))
         text = html.escape(str(item.get("text", "")))
         item_headline = str(item.get("headline") or "").strip()
         value = item.get("value")
@@ -656,10 +128,10 @@ def render_items(items) -> str:
         domain = domain_of(str(url)) if url else ""
 
         metadata = []
-        if worker:
-            metadata.append(f'<span class="feed-worker">{html.escape(worker)}</span>')
-        if domain and domain.lower() != worker.lower():
-            metadata.append(f"<span>{html.escape(domain)}</span>")
+        if domain:
+            metadata.append(f'<span class="feed-worker">{html.escape(domain)}</span>')
+        elif worker:
+            metadata.append(f'<span class="feed-worker">{html.escape(worker.replace("-", " ").title())}</span>')
         meta_html = '<span>·</span>'.join(metadata)
 
         badge = (
@@ -674,7 +146,7 @@ def render_items(items) -> str:
         )
         link = (
             f'<a class="source-link" href="{html.escape(str(url), quote=True)}" '
-            f'target="_blank" rel="noopener noreferrer">Read source ↗</a>'
+            f'target="_blank" rel="noopener noreferrer">Open source ↗</a>'
             if url
             else '<span class="feed-meta">No source link captured</span>'
         )
@@ -953,13 +425,16 @@ def load_more_button(state_key: str, total: int, step: int, label: str):
 
 st.markdown(
     '<header class="digest-hero">'
-    '<div class="digest-masthead"><div class="digest-title" role="heading" aria-level="1">The Physical AI Universe</div></div>'
-    "</header>",
+    '<div class="digest-title" role="heading" aria-level="1" aria-label="The Physical AI Universe">'
+    '<div class="brand-primary"><span class="brand-prefix">THE</span>'
+    '<span class="brand-core">PHYSICAL <span class="brand-ai">AI</span></span>'
+    '<span class="brand-terminal" aria-hidden="true"></span></div>'
+    '<div class="brand-universe">UNIVERSE</div></div></header>',
     unsafe_allow_html=True,
 )
 
 def render_owner_panel(health):
-    with st.popover("Owner mode", use_container_width=True):
+    with st.popover("Owner", use_container_width=True):
         st.text_input("Grader PIN", type="password", key="grader_pin")
         st.checkbox(
             "Load grading controls",
@@ -986,21 +461,64 @@ def render_owner_panel(health):
         )
 
 
+def search_editions(daily, query):
+    """Filter loaded published stories without changing their source records."""
+    terms = query.casefold().split()
+    if not terms:
+        return daily
+    matches = []
+    for post in daily:
+        items = [
+            item for item in post.get("items") or []
+            if all(term in " ".join(str(item.get(field) or "") for field in
+                ("headline", "text", "worker", "url", "value")).casefold() for term in terms)
+        ]
+        if items:
+            matches.append({**post, "items": items})
+    return matches
+
+
 def render_feed(data):
     daily = sort_posts((data or {}).get("daily", []))
     if not daily:
         st.markdown(
-            '<div class="empty-state">No digest editions yet — the next run will populate this feed.</div>',
+            '<div class="empty-state">No published digests yet.</div>',
             unsafe_allow_html=True,
         )
         return
 
-    daily_limit = min(int(st.session_state.get("daily_limit", DAILY_PAGE_SIZE)), len(daily))
-    for index, post in enumerate(daily[:daily_limit]):
-        st.markdown(daily_edition(post, latest=index == 0), unsafe_allow_html=True)
-        if st.session_state.get("grading_enabled") and index < GRADE_PANEL_DAILY:
-            grade_popover("daily", post)
-    load_more_button("daily_limit", len(daily), DAILY_PAGE_SIZE, "Load earlier digests")
+    query = str(st.session_state.get("feed_search", "")).strip()
+    if st.session_state.get("_previous_feed_search", "") != query:
+        st.session_state["daily_limit"] = DAILY_PAGE_SIZE
+        st.session_state["_previous_feed_search"] = query
+    matching = search_editions(daily, query)
+    daily_limit = min(int(st.session_state.get("daily_limit", DAILY_PAGE_SIZE)), len(matching))
+    visible = matching[:daily_limit]
+    if query:
+        matched_count = sum(len(post.get("items") or []) for post in matching)
+        label = f"{matched_count} search result{'s' if matched_count != 1 else ''}"
+    else:
+        label = ""
+    editions = "".join(
+        daily_edition(post, latest=not query and index == 0)
+        for index, post in enumerate(visible)
+    )
+    if not matching:
+        editions = (
+            '<div class="empty-state">No matching stories.<br>'
+            'Try another company, topic or source.</div>'
+        )
+    st.markdown(
+        '<main class="edition-stack" aria-label="Published editions">'
+        + (f'<div class="section-label">{html.escape(label)}</div>' if label else "")
+        + f'{editions}</main>',
+        unsafe_allow_html=True,
+    )
+    load_more_button("daily_limit", len(matching), DAILY_PAGE_SIZE, "Load earlier digests")
+    if st.session_state.get("grading_enabled"):
+        with st.expander("Rate published editions"):
+            for post in visible[:GRADE_PANEL_DAILY]:
+                grade_popover("daily", post)
 
 
 def render_prefilter_kills(items):
@@ -1098,42 +616,9 @@ def render_rejected_view():
 
 
 def render_dashboard(view):
-    health = None
-    health_error = None
-    try:
-        health = fetch_health()
-    except Exception as exc:
-        health_error = exc
-
-    # /health may not exist on an older aggregator. Load the digest feed only
-    # in that fallback case so the status can still show useful recency.
-    fallback_data = None
-    latest_post = None
-    if health is None:
-        try:
-            fallback_data = fetch_digests()
-            fallback_daily = sort_posts(fallback_data.get("daily", []))
-            latest_post = fallback_daily[0] if fallback_daily else None
-        except Exception:
-            fallback_data = None
-
-    status = pipeline_status(health, latest_post)
-    status_col, owner_col = st.columns([4.35, 1.4], vertical_alignment="center")
-    with status_col:
-        detail = f" · {status.detail}" if status.detail else ""
-        tooltip = f' title="{html.escape(status.detail, quote=True)}"' if status.detail else ""
-        st.markdown(
-            f'<div class="digest-status"{tooltip}>'
-            f'<span class="digest-status-dot status-{status.level}"></span>'
-            f'{html.escape(status.text + detail)}</div>',
-            unsafe_allow_html=True,
-        )
-    with owner_col:
-        render_owner_panel(health)
-
     if view == "Feed":
         try:
-            data = fallback_data if fallback_data is not None else fetch_digests()
+            data = fetch_digests()
         except Exception as exc:
             st.markdown(
                 '<div class="empty-state">Could not reach the digest feed.<br>'
@@ -1147,17 +632,6 @@ def render_dashboard(view):
     else:
         render_universe(WORKER_URL)
 
-    if health_error:
-        st.caption("Pipeline health endpoint unavailable; status is based on the latest loaded digest.")
-
-    st.markdown(
-        '<div class="digest-footer">Live view refreshes every 2 min · '
-        f'<a href="{html.escape(WORKER_URL, quote=True)}/health" target="_blank" rel="noopener noreferrer">pipeline health</a> · '
-        f'<a href="{html.escape(WORKER_URL, quote=True)}/digests" target="_blank" rel="noopener noreferrer">raw digest JSON</a> · '
-        f'<a href="{html.escape(WORKER_URL, quote=True)}/rejected" target="_blank" rel="noopener noreferrer">rejected JSON</a>'
-        "</div>",
-        unsafe_allow_html=True,
-    )
 
 
 @st.fragment(run_every=120)
@@ -1165,10 +639,18 @@ def render_live_dashboard(view):
     render_dashboard(view)
 
 
-view = st.radio(
-    "Dashboard view", ["Feed", "Rejected", "Universe"], horizontal=True,
-    label_visibility="collapsed", key="dashboard_view",
-)
+navigation, search_control, owner_control = st.columns([6, 1, 1], gap="small", vertical_alignment="center")
+with navigation:
+    view = st.radio(
+        "Dashboard view", ["Feed", "Rejected", "Universe"], horizontal=True,
+        label_visibility="collapsed", key="dashboard_view",
+    )
+with search_control:
+    if view == "Feed":
+        with st.popover("Search", use_container_width=True):
+            st.text_input("Search published stories", placeholder="Company, topic or source", key="feed_search")
+with owner_control:
+    render_owner_panel(None)
 # Owner editing has no periodic rerun: unsaved form values remain stable.
 if view == "Universe":
     render_dashboard(view)
