@@ -254,7 +254,7 @@ def source_editor(base, pin, data, source=None):
         json_fields = {}
         with st.expander("Advanced structured feed extraction", expanded=False):
             st.caption("Use the JSON method for a company article API or embedded article data. Preview to verify titles and company-only categories.")
-            for field, label in [("json_script_id", "Embedded JSON element ID (optional)"), ("json_items_path", "Article array path"), ("json_title_field", "JSON headline field"), ("json_url_field", "JSON URL field"), ("json_date_field", "JSON date field"), ("json_category_field", "JSON category field"), ("json_external_field", "JSON external media flag"), ("json_excerpt_field", "JSON excerpt field")]:
+            for field, label in [("json_script_id", "Embedded JSON element ID (optional)"), ("json_items_path", "Article array path"), ("json_title_field", "JSON headline field"), ("json_url_field", "JSON URL field"), ("json_url_prefix", "Article URL directory (optional)"), ("json_date_field", "JSON date field"), ("json_category_field", "JSON category field"), ("json_external_field", "JSON external media flag"), ("json_excerpt_field", "JSON excerpt field")]:
                 json_fields[field] = st.text_input(label, value=source.get("config", {}).get(field, ""), disabled=protected, key=field + suffix).strip()
         st.caption("Company-issued releases and official updates only. External media coverage and ‘in the news’ roundups are excluded.")
         notes = st.text_area("Source notes", value=source.get("tracking_notes", ""), max_chars=2000)
