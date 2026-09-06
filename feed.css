@@ -32,7 +32,7 @@ html, body, button, input, textarea, [data-testid="stAppViewContainer"] {
 }
 .block-container { max-width: 1120px; padding: 1.3rem 2.5rem 3rem; }
 [data-testid="stVerticalBlock"] { gap: .85rem; }
-.digest-hero { padding:1.9rem 0 1.55rem; border-bottom:1px solid var(--digest-border); }
+.digest-hero { padding:1.9rem 0 1.55rem; }
 .digest-title { color:var(--digest-text); }
 .brand-primary { display:flex; align-items:center; gap:12px; }
 .brand-prefix { color:var(--digest-text-muted); font:9px/1 var(--font-mono); letter-spacing:1.5px; }
@@ -40,7 +40,7 @@ html, body, button, input, textarea, [data-testid="stAppViewContainer"] {
 .brand-ai { color:var(--digest-blue); }
 .brand-terminal { width:7px; height:7px; background:var(--digest-orange); align-self:flex-start; margin-top:3px; }
 .brand-universe { margin:9px 0 0 32px; font:11px/1 var(--font-mono); letter-spacing:6px; color:#b8c2d2; }
-[data-testid="stHorizontalBlock"]:has([aria-label="Dashboard view"]) { flex-wrap:nowrap !important; align-items:center; gap:8px; padding-bottom:10px; margin-bottom:8px; border-bottom:1px solid var(--digest-border); }
+[data-testid="stHorizontalBlock"]:has([aria-label="Dashboard view"]) { flex-wrap:nowrap !important; align-items:center; gap:8px; padding-block:10px; margin-bottom:8px; border-block:1px solid var(--digest-border); }
 [data-testid="stHorizontalBlock"]:has([aria-label="Dashboard view"]) > [data-testid="stColumn"] { min-width:0 !important; }
 [data-testid="stHorizontalBlock"]:has([aria-label="Dashboard view"]) > [data-testid="stColumn"]:first-child { flex:3 1 0 !important; }
 [data-testid="stHorizontalBlock"]:has([aria-label="Dashboard view"]) > [data-testid="stColumn"]:not(:first-child) { flex:1 1 0 !important; width:auto !important; }
@@ -64,7 +64,7 @@ html, body, button, input, textarea, [data-testid="stAppViewContainer"] {
   border-bottom-color:var(--digest-blue); color:var(--digest-text);
 }
 [role="radiogroup"][aria-label="Dashboard view"] > label[data-baseweb="radio"] > div:first-child { position:absolute; opacity:0; width:1px; height:1px; overflow:hidden; }
-[role="radiogroup"][aria-label="Dashboard view"] label p { font-size:13px; font-weight:600; letter-spacing:.2px; }
+[role="radiogroup"][aria-label="Dashboard view"] label p { font-size:15px; font-weight:600; letter-spacing:.2px; }
 [role="radiogroup"][aria-label="Dashboard view"] label:has(input:focus-visible) { outline:2px solid var(--digest-blue); outline-offset:4px; }
 [data-testid="stTextInput"]:has(input[aria-label="Search published stories"]) { margin: .3rem 0 1rem; }
 [data-testid="stTextInput"] input { font-size:13px; }
@@ -137,7 +137,7 @@ html, body, button, input, textarea, [data-testid="stAppViewContainer"] {
   .edition-kicker { gap:6px; font-size:9px; }
   .rejected-item { grid-template-columns:42px minmax(0,1fr); padding:17px; gap:10px; }
   [role="radiogroup"][aria-label="Dashboard view"] > label { padding-inline:2px; }
-  [role="radiogroup"][aria-label="Dashboard view"] label p { font-size:11px; }
+  [role="radiogroup"][aria-label="Dashboard view"] label p { font-size:13px; }
   [data-testid="stHorizontalBlock"]:has([aria-label="Dashboard view"]) [data-testid="stPopover"] > button { padding-inline:4px; }
 }
 @media (prefers-reduced-motion:reduce) { *, *::before, *::after { animation:none !important; transition:none !important; scroll-behavior:auto !important; } }
