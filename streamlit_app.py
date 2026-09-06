@@ -639,7 +639,7 @@ def render_live_dashboard(view):
     render_dashboard(view)
 
 
-navigation, search_control, owner_control = st.columns([6, 1, 1], gap="small", vertical_alignment="center")
+navigation, search_control, owner_control = st.columns([3, 1, 1], gap="small", vertical_alignment="center")
 with navigation:
     view = st.radio(
         "Dashboard view", ["Feed", "Rejected", "Universe"], horizontal=True,
