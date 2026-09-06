@@ -64,7 +64,7 @@ html, body, button, input, textarea, [data-testid="stAppViewContainer"] {
   border-bottom-color:var(--digest-blue); color:var(--digest-text);
 }
 [role="radiogroup"][aria-label="Dashboard view"] > label[data-baseweb="radio"] > div:first-child { position:absolute; opacity:0; width:1px; height:1px; overflow:hidden; }
-[role="radiogroup"][aria-label="Dashboard view"] label p { font-size:13px; font-weight:600; letter-spacing:.2px; }
+[role="radiogroup"][aria-label="Dashboard view"] label p { font-size:15px; font-weight:600; letter-spacing:.2px; }
 [role="radiogroup"][aria-label="Dashboard view"] label:has(input:focus-visible) { outline:2px solid var(--digest-blue); outline-offset:4px; }
 [data-testid="stTextInput"]:has(input[aria-label="Search published stories"]) { margin: .3rem 0 1rem; }
 [data-testid="stTextInput"] input { font-size:13px; }
@@ -137,7 +137,7 @@ html, body, button, input, textarea, [data-testid="stAppViewContainer"] {
   .edition-kicker { gap:6px; font-size:9px; }
   .rejected-item { grid-template-columns:42px minmax(0,1fr); padding:17px; gap:10px; }
   [role="radiogroup"][aria-label="Dashboard view"] > label { padding-inline:2px; }
-  [role="radiogroup"][aria-label="Dashboard view"] label p { font-size:11px; }
+  [role="radiogroup"][aria-label="Dashboard view"] label p { font-size:13px; }
   [data-testid="stHorizontalBlock"]:has([aria-label="Dashboard view"]) [data-testid="stPopover"] > button { padding-inline:4px; }
 }
 @media (prefers-reduced-motion:reduce) { *, *::before, *::after { animation:none !important; transition:none !important; scroll-behavior:auto !important; } }
