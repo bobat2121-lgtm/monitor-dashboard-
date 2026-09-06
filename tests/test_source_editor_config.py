@@ -17,15 +17,15 @@ class SourceEditorConfigTests(unittest.TestCase):
 import json
 import streamlit as st
 import universe_view as uv
+from unittest.mock import patch
 data = json.loads(DATA_LITERAL)
 def capture_api(base, pin, path='', payload=None):
     st.session_state['payload'] = payload
     raise ValueError('Captured locally')
 def capture_save(base, pin, data, operation, preview_id=None):
     st.session_state['payload'] = operation['value']
-uv.api = capture_api
-uv.save_change = capture_save
-uv.source_editor('https://example.com', 'test-pin', data, data['registry']['sources'][0])
+with patch.object(uv, 'api', capture_api), patch.object(uv, 'save_change', capture_save):
+    uv.source_editor('https://example.com', 'test-pin', data, data['registry']['sources'][0])
 '''.replace('DATA_LITERAL', repr(json.dumps(data)))
             with patch('requests.get', side_effect=AssertionError('No network')), patch('requests.post', side_effect=AssertionError('No network')):
                 for action in ['Preview releases', 'Save source', 'Pause']:
