@@ -1,13 +1,20 @@
 # monitor-dashboard
 
-Black, X-style Streamlit feed for a Cloudflare-based news monitoring pipeline.
+A minimal editorial news platform for physical AI, built in Streamlit with an
+obsidian black base, electric blue navigation and restrained copper-orange accents.
+
+- Compact typographic masthead and a single, uninterrupted digest feed.
+- Search and owner tools are available from compact navigation controls.
+- Keyboard-accessible article disclosures and direct source links.
+- Existing Feed, Rejected and Universe navigation, owner feedback, API endpoints
+  and automatic refresh behavior are preserved.
+- The visual system is isolated in `feed.css`; the native widget theme lives in
+  `.streamlit/config.toml`. No extra runtime dependencies or remote fonts.
 
 - **Feed** — high-signal editions from the five daily review slots (7am, 9am,
   noon, 5pm, and 7pm ET), newest first.
 - **Rejected** — the audit and feedback lane for reviewed candidates that were
   not selected for an edition.
-- **Pipeline status** — `/health`-based green/amber/red freshness. A successful
-  quiet review stays healthy even when it intentionally publishes no edition.
 
 Data comes from a public read-only JSON endpoint (`/digests`) served by a
 Cloudflare Worker. Ranking and editorial summaries are produced by the

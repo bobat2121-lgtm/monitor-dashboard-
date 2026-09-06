@@ -87,6 +87,18 @@ class StreamlitStartupTests(unittest.TestCase):
             self.assertIn("The service plans at least 180 unmanned aircraft.", rendered)
             self.assertIn("A legacy digest item still renders without a headline.", rendered)
 
+            search = next(field for field in app.text_input if field.label == "Search published stories")
+            search.set_value("legacy").run()
+            self.assertEqual(list(app.exception), [])
+            filtered = "\n".join(markdown.value for markdown in app.markdown)
+            self.assertIn("1 search result", filtered)
+            self.assertIn("A legacy digest item still renders without a headline.", filtered)
+            self.assertNotIn("Air Force &lt;accelerates&gt;", filtered)
+            search.set_value("no-such-story-xxxxx").run()
+            self.assertIn("No matching stories.", "\n".join(m.value for m in app.markdown))
+            search.set_value("").run()
+            self.assertIn("Air Force &lt;accelerates&gt;", "\n".join(m.value for m in app.markdown))
+
             view = next(radio for radio in app.radio if radio.label == "Dashboard view")
             view.set_value("Rejected")
             app.run(timeout=30)
