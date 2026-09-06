@@ -8,10 +8,11 @@ from test_universe import DATA, SOURCE, by_label
 
 class SourceEditorConfigTests(unittest.TestCase):
     def test_json_url_directory_survives_preview_save_and_pause(self):
-        for prefix in ['/media-center/announcements/', '/en-US/newsroom/']:
+        for prefix in ['/media-center/announcements/', '/en-US/newsroom/', '']:
             data = copy.deepcopy(DATA)
             data['registry']['sources'] = [{**SOURCE, 'key': 'managed_json', 'protected_roster_entry': False,
-                'companyStatus': 'private', 'adapter': 'json', 'config': {'json_url_field': 'slug', 'json_url_prefix': prefix}}]
+                'companyStatus': 'private', 'adapter': 'json', 'source_role': 'issuer_release_distribution',
+                'config': {'json_url_field': 'slug', 'json_url_prefix': prefix}}]
             code = '''
 import json
 import streamlit as st
@@ -35,6 +36,8 @@ uv.source_editor('https://example.com', 'test-pin', data, data['registry']['sour
                     by_label(app.button, 'Save source' if action == 'Pause' else action).click().run()
                     self.assertEqual(list(app.exception), [])
                     self.assertEqual(app.session_state['payload']['json_url_prefix'], prefix)
+                    if action != 'Preview releases':
+                        self.assertEqual(app.session_state['payload']['source_role'], 'issuer_release_distribution')
 
 
 if __name__ == '__main__':

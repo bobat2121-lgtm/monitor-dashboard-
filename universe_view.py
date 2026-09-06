@@ -15,6 +15,7 @@ ORANGE = "#ff9a3d"
 MUTED = "#858e99"
 ROLE_NAMES = {
     "company_newsroom": "Company newsroom",
+    "issuer_release_distribution": "Issuer release distributor",
     "company_ir_earnings_presentation": "Earnings and presentations",
     "official_customer_partner": "Official customer or partner",
     "official_government_procurement": "Official government or procurement",
