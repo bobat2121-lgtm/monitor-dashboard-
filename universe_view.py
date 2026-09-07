@@ -537,8 +537,8 @@ def render_source_evidence(base, pin, data, source):
         if any(report.get("truncated", {}).values()):
             st.caption("This is a bounded sample; additional evidence is retained.")
         if checks:
-            with st.expander("Coverage details"):
-                st.json(report.get("checks", [])[0].get("completeness"))
+            st.caption("Coverage details")
+            st.json(report.get("checks", [])[0].get("completeness"), expanded=False)
 
 
 def render_relationships(base, pin, data):
