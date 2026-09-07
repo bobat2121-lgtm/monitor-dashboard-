@@ -75,6 +75,12 @@ html, body, button, input, textarea, [data-testid="stAppViewContainer"] {
 .section-label span:last-child { color:var(--digest-text-muted); letter-spacing:0; }
 .feed-edition { overflow:hidden; margin:0 0 24px; border:1px solid var(--digest-border); border-radius:10px; background:var(--digest-surface); }
 .feed-edition.latest-edition { border-top:2px solid var(--digest-blue); }
+[data-testid="stForm"]:has(.owner-edition) { overflow:hidden; padding:0; margin-bottom:24px; border:1px solid var(--digest-border); border-radius:10px; background:var(--digest-surface); }
+[data-testid="stForm"]:has(.owner-edition.latest-edition) { border-top:2px solid var(--digest-blue); }
+.feed-edition.owner-edition { margin:0; border:0; border-radius:0; }
+[data-testid="stVerticalBlock"]:has(> .element-container .digest-grading-title),
+[data-testid="stVerticalBlock"]:has(> [data-testid="stElementContainer"] .digest-grading-title) { padding:20px 24px 24px; border-top:1px solid var(--digest-border); }
+.digest-grading-title { color:var(--digest-text); font-size:15px; font-weight:600; }
 .edition-head { padding:21px 24px 22px; border-bottom:1px solid var(--digest-border); }
 .latest-edition .edition-head { background:linear-gradient(120deg,#10213a 0%,#0e141e 66%,#0c0e12 100%); }
 .edition-kicker { display:flex; align-items:center; flex-wrap:wrap; gap:8px; color:var(--digest-text-muted); font:10px/1.5 var(--font-mono); font-variant-numeric:tabular-nums; }
@@ -134,6 +140,8 @@ html, body, button, input, textarea, [data-testid="stAppViewContainer"] {
   .brand-universe { margin-left:29px; }
   .edition-head { padding:19px; }
   .feed-item { padding:19px; gap:10px; grid-template-columns:23px minmax(0,1fr); }
+  [data-testid="stVerticalBlock"]:has(> .element-container .digest-grading-title),
+  [data-testid="stVerticalBlock"]:has(> [data-testid="stElementContainer"] .digest-grading-title) { padding:19px; }
   .edition-kicker { gap:6px; font-size:9px; }
   .rejected-item { grid-template-columns:42px minmax(0,1fr); padding:17px; gap:10px; }
   [role="radiogroup"][aria-label="Dashboard view"] > label { padding-inline:2px; }

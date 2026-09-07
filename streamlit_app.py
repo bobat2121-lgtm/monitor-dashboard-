@@ -50,7 +50,6 @@ ET = ZoneInfo("America/New_York")
 DAILY_PAGE_SIZE = 10
 REJECTED_PAGE_SIZE = 50
 REJECTED_FETCH_LIMIT = 500
-GRADE_PANEL_DAILY = 12
 
 
 st.markdown(
@@ -192,8 +191,10 @@ def edition_header(post, latest=False) -> str:
     )
 
 
-def daily_edition(post, latest=False) -> str:
+def daily_edition(post, latest=False, grading=False) -> str:
     edition_class = "feed-edition latest-edition" if latest else "feed-edition"
+    if grading:
+        edition_class += " owner-edition"
     return (
         f'<section class="{edition_class}">'
         f"{edition_header(post, latest=latest)}"
@@ -279,7 +280,7 @@ def handle_grade_response(response, success_message: str):
         st.error(f"Error {response.status_code}: {response.text[:200]}")
 
 
-def grade_popover(post_type, post):
+def grading_panel(post_type, post):
     post_id = post.get("id")
     if post_id is None:
         return
@@ -288,7 +289,11 @@ def grade_popover(post_type, post):
     timestamp = fmt_short_time(str(post.get("posted_at") or ""))
     label = f"Rated {graded} · {timestamp}" if graded else f"Rate digest · {timestamp}"
 
-    with st.popover(label):
+    with st.container():
+        st.markdown(
+            f'<div class="digest-grading-title">{html.escape(label)}</div>',
+            unsafe_allow_html=True,
+        )
         if not str(st.session_state.get("grader_pin", "")).strip():
             st.caption("Enter the grader PIN in Owner mode at the top of the feed.")
 
@@ -311,7 +316,7 @@ def grade_popover(post_type, post):
             height=80,
         )
 
-        if st.button("Submit grades", key=f"sub_{post_type}_{post_id}", type="primary"):
+        if st.form_submit_button("Submit grades", type="primary"):
             pin = str(st.session_state.get("grader_pin", "")).strip()
             if not pin:
                 st.warning("Enter the grader PIN in Owner mode first.")
@@ -456,8 +461,8 @@ def render_owner_panel(health):
                 )
             )
         st.caption(
-            "Enable grading only when needed, then use Rate digest or the "
-            "Rejected grading panel to create ranking feedback."
+            "Enable grading to rate articles below each digest in its own panel, "
+            "or use the Rejected grading panel."
         )
 
 
@@ -499,26 +504,36 @@ def render_feed(data):
         label = f"{matched_count} search result{'s' if matched_count != 1 else ''}"
     else:
         label = ""
-    editions = "".join(
-        daily_edition(post, latest=not query and index == 0)
-        for index, post in enumerate(visible)
-    )
+    if label:
+        st.markdown(f'<div class="section-label">{html.escape(label)}</div>', unsafe_allow_html=True)
     if not matching:
-        editions = (
+        st.markdown(
             '<div class="empty-state">No matching stories.<br>'
-            'Try another company, topic or source.</div>'
+            'Try another company, topic or source.</div>',
+            unsafe_allow_html=True,
         )
-    st.markdown(
-        '<main class="edition-stack" aria-label="Published editions">'
-        + (f'<div class="section-label">{html.escape(label)}</div>' if label else "")
-        + f'{editions}</main>',
-        unsafe_allow_html=True,
-    )
+    elif st.session_state.get("grading_enabled"):
+        for index, post in enumerate(visible):
+            latest = not query and index == 0
+            if post.get("id") is None:
+                st.markdown(daily_edition(post, latest=latest), unsafe_allow_html=True)
+                continue
+            # One native form encloses the edition and its feedback controls.
+            # Stable digest/rank keys keep votes attached when the feed changes.
+            with st.form(f"grade_daily_{post['id']}", border=False):
+                st.markdown(daily_edition(post, latest=latest, grading=True), unsafe_allow_html=True)
+                grading_panel("daily", post)
+    else:
+        editions = "".join(
+            daily_edition(post, latest=not query and index == 0)
+            for index, post in enumerate(visible)
+        )
+        st.markdown(
+            '<main class="edition-stack" aria-label="Published editions">'
+            + f'{editions}</main>',
+            unsafe_allow_html=True,
+        )
     load_more_button("daily_limit", len(matching), DAILY_PAGE_SIZE, "Load earlier digests")
-    if st.session_state.get("grading_enabled"):
-        with st.expander("Rate published editions"):
-            for post in visible[:GRADE_PANEL_DAILY]:
-                grade_popover("daily", post)
 
 
 def render_prefilter_kills(items):
