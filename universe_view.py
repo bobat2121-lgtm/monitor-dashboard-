@@ -401,7 +401,10 @@ def render_universe(base):
         if st.session_state.get("universe_source") not in options:
             st.session_state["universe_source"] = None
         selected = st.selectbox("Edit or add a source", options, format_func=lambda k: "＋ Add a source" if k is None else all_sources[k]["name"], key="universe_source")
-        source_editor(base, pin, data, all_sources.get(selected))
+        selected_source = all_sources.get(selected)
+        if selected_source and selected_source.get("managed_by") == "universe":
+            render_source_evidence(base, pin, data, selected_source)
+        source_editor(base, pin, data, selected_source)
         return
 
     industries = {i["id"]: i for i in registry["industries"]}
@@ -472,6 +475,70 @@ def render_universe(base):
             company_editor(base, pin, data, selected)
     with st.expander("Add a company"):
         company_editor(base, pin, data)
+
+
+def source_evidence_rows(report):
+    """Bounded display rows; a missing count stays unknown, never a quiet zero."""
+    checks = []
+    for row in report.get("checks", [])[:10]:
+        counts = row.get("counts") if isinstance(row.get("counts"), dict) else {}
+        completeness = row.get("completeness") if isinstance(row.get("completeness"), dict) else {}
+        checks.append({"Checked": short_time(row.get("checked_at")), "Check result": row.get("status"),
+                       "Coverage": "Response capped" if completeness.get("response_complete") is False else "Response complete; archive unknown" if completeness.get("response_complete") is True else "Unknown",
+                       "Accepted": counts.get("accepted"), "Excluded": counts.get("excluded"),
+                       "Pending": counts.get("pending_total", counts.get("body_pending", counts.get("pending"))), "Issue": row.get("error")})
+    observations = []
+    for row in report.get("observations", [])[:20]:
+        evidence = row.get("evidence") if isinstance(row.get("evidence"), dict) else {}
+        observations.append({"Observed": short_time(row.get("observed_at")), "Title": evidence.get("title"),
+                             "Decision": row.get("decision"), "Reason": row.get("reason"), "Change": row.get("change_kind"),
+                             "Captured evidence": evidence.get("excerpt"), "URL": row.get("url")})
+    pending = [{"URL": row.get("url"), "Attempts": row.get("attempts"), "Next attempt": short_time(row.get("next_attempt_at")),
+                "Issue": row.get("last_error")} for row in report.get("pending", [])[:20]]
+    return checks, observations, pending
+
+
+def render_source_evidence(base, pin, data, source):
+    with st.expander("Collection evidence and exclusions"):
+        st.caption("Inspect recorded exclusions, pending article checks and changed releases. This view does not replay or activate sources.")
+        cache_key = (source["key"], data.get("revision_id"))
+        if st.button("Load collection evidence", key="load_source_evidence_" + source["key"]):
+            try:
+                report = api(base, pin, "/source-evidence?key=" + requests.utils.quote(source["key"], safe=""))
+                st.session_state["universe_source_evidence"] = {"key": cache_key, "report": report}
+            except (ValueError, requests.RequestException):
+                st.session_state.pop("universe_source_evidence", None)
+                st.warning("Collection evidence could not be loaded. Its status is unknown.")
+        saved = st.session_state.get("universe_source_evidence", {})
+        if saved.get("key") != cache_key:
+            return
+        report = saved["report"]
+        if not report.get("available"):
+            st.info("Evidence recording is not available for this source yet. Historical completeness is unknown.")
+            return
+        counts = report.get("counts", {})
+        metrics = st.columns(3)
+        metrics[0].metric("Recorded observations", counts.get("observations") if counts.get("observations") is not None else "Unknown")
+        metrics[1].metric("Recorded exclusions", counts.get("excluded") if counts.get("excluded") is not None else "Unknown")
+        metrics[2].metric("Changed URL observations", counts.get("same_url_revisions") if counts.get("same_url_revisions") is not None else "Unknown")
+        st.caption("Recorded since " + short_time(report.get("retained_since")) + ". A successful check covers the fetched page; it does not prove the entire historical archive was collected.")
+        checks, observations, pending = source_evidence_rows(report)
+        if checks:
+            st.write("Recent checks")
+            st.dataframe(checks, hide_index=True, use_container_width=True)
+        if observations:
+            st.write("Exclusions, pending observations and revisions")
+            st.dataframe(observations, hide_index=True, use_container_width=True, column_config={"URL": st.column_config.LinkColumn("URL")})
+        else:
+            st.caption("No exclusions or revisions appear in this recorded sample.")
+        if pending:
+            st.write("Article checks still pending")
+            st.dataframe(pending, hide_index=True, use_container_width=True, column_config={"URL": st.column_config.LinkColumn("URL")})
+        if any(report.get("truncated", {}).values()):
+            st.caption("This is a bounded sample; additional evidence is retained.")
+        if checks:
+            st.caption("Coverage details")
+            st.json(report.get("checks", [])[0].get("completeness"), expanded=False)
 
 
 def render_relationships(base, pin, data):
