@@ -5,6 +5,9 @@ obsidian black base, electric blue navigation and restrained copper-orange accen
 
 - Compact typographic masthead and a single, uninterrupted digest feed.
 - Search and owner tools are available from compact navigation controls.
+- In Owner, enable **Load grading controls** to show article votes, an optional
+  note, and **Submit grades** below each digest inside its panel. Each digest
+  submits independently, including earlier editions loaded through pagination.
 - Keyboard-accessible article disclosures and direct source links.
 - Existing Feed, Rejected and Universe navigation, owner feedback, API endpoints
   and automatic refresh behavior are preserved.
