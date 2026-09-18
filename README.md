@@ -22,6 +22,9 @@ obsidian black base, electric blue navigation and restrained copper-orange accen
   noon, 5pm, and 7pm ET), newest first.
 - **Rejected** — the audit and feedback lane for reviewed candidates that were
   not selected for an edition.
+- **Rules** (Owner PIN) — pending rule drafts to approve, edit or reject;
+  active rules with their calibration state (working, ignored, misapplied,
+  dormant); supersede or deactivate a rule.
 
 Data comes from a public read-only JSON endpoint (`/digests`) served by a
 Cloudflare Worker. Ranking and editorial summaries are produced by the

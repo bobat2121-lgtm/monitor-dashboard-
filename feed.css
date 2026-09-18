@@ -155,3 +155,14 @@ html, body, button, input, textarea, [data-testid="stAppViewContainer"] {
 .grade-context-row { display:flex; justify-content:space-between; gap:12px; font-size:12px; line-height:1.5; }
 .grade-context-item { color:var(--digest-text); flex:1 1 55%; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .grade-context-grader { color:var(--digest-text-muted); flex:1 1 45%; text-align:right; }
+
+/* Rules tab */
+.rules-section { font:10px/1.5 var(--font-mono); letter-spacing:1.4px; text-transform:uppercase; color:var(--digest-text-secondary); margin:18px 0 10px; }
+.rules-list { display:flex; flex-direction:column; gap:10px; }
+.rule-row { padding:12px 14px; border:1px solid var(--digest-border); border-radius:8px; }
+.rule-row.inactive { opacity:.55; }
+.rule-head { display:flex; align-items:center; gap:10px; margin-bottom:6px; }
+.rule-id { font:12px/1 var(--font-mono); color:var(--digest-text); }
+.rule-badge { font:10px/1 var(--font-mono); letter-spacing:1px; text-transform:uppercase; color:#fff; padding:4px 7px; border-radius:4px; }
+.rule-text { font-size:14px; line-height:1.55; color:var(--digest-text); }
+.rule-meta { font-size:11px; color:var(--digest-text-muted); margin-top:4px; }
