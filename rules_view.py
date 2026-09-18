@@ -149,7 +149,10 @@ def render_rules(base, pin, rules, include_inactive):
             rule_id = st.selectbox("Rule", active_ids, key="rule_action_id")
             text = st.text_area("Replacement text (supersede only)", key="rule_action_text", height=100,
                                 placeholder="State the principle, then the boundary. The old rule becomes inactive and points at the new one.")
-            supersede, deactivate = st.columns(2)
+            signature = st.text_input("Signature (workers: a, b; tickers: X; keywords: k) — sets what calibration counts as applicable", key="rule_action_signature")
+            supersede, deactivate, set_sig = st.columns(3)
+            if set_sig.form_submit_button("Set signature"):
+                _act(base, pin, f"/{rule_id}/signature", {"signature": parse_signature(signature)}, lambda r: f"{r.get('rule_id')} signature updated")
             if supersede.form_submit_button("Supersede", type="primary"):
                 if len(text.strip()) < 20:
                     st.info("Replacement text needs at least 20 characters.")

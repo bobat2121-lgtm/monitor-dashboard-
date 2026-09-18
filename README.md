@@ -24,7 +24,12 @@ obsidian black base, electric blue navigation and restrained copper-orange accen
   not selected for an edition.
 - **Rules** (Owner PIN) — pending rule drafts to approve, edit or reject;
   active rules with their calibration state (working, ignored, misapplied,
-  dormant); supersede or deactivate a rule.
+  dormant); supersede or deactivate a rule; set the signature calibration
+  uses to decide where a rule applies.
+- **Calibration** (Owner PIN) — the monthly scoreboard: headline agreement
+  with the delta vs last month, trend since inception, worst three
+  dimensions, most improved, rules by state, drill-down to the underlying
+  grades, and the form for this month's audit and next month's focus.
 
 Data comes from a public read-only JSON endpoint (`/digests`) served by a
 Cloudflare Worker. Ranking and editorial summaries are produced by the
