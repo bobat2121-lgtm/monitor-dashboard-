@@ -5,9 +5,13 @@ obsidian black base, electric blue navigation and restrained copper-orange accen
 
 - Compact typographic masthead and a single, uninterrupted digest feed.
 - Search and owner tools are available from compact navigation controls.
-- In Owner, enable **Load grading controls** to show article votes, an optional
-  note, and **Submit grades** below each digest inside its panel. Each digest
-  submits independently, including earlier editions loaded through pagination.
+- In Owner, enable **Load grading controls** to grade one item at a time
+  below each digest and on the Rejected tab: pick the item, score it 0-100
+  (90+ lead, 70-89 digest, 40-69 borderline, <40 reject), optionally override
+  the action, name a reason code, choose item or rule scope, and add a note.
+  The grader's own score and reason for each item are shown so you grade
+  against them. Both tabs post the same row to the aggregator's `/grades`
+  endpoint with the runtime PIN; nothing is stored in this repo.
 - Keyboard-accessible article disclosures and direct source links.
 - Existing Feed, Rejected and Universe navigation, owner feedback, API endpoints
   and automatic refresh behavior are preserved.
