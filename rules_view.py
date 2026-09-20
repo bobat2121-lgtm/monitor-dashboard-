@@ -150,9 +150,15 @@ def render_rules(base, pin, rules, include_inactive):
             text = st.text_area("Replacement text (supersede only)", key="rule_action_text", height=100,
                                 placeholder="State the principle, then the boundary. The old rule becomes inactive and points at the new one.")
             signature = st.text_input("Signature (workers: a, b; tickers: X; keywords: k) — sets what calibration counts as applicable", key="rule_action_signature")
-            supersede, deactivate, set_sig = st.columns(3)
+            fold_version = st.text_input("Fold into brief version (e.g. 2026.10.1) — the rule is archived when that brief deploys", key="rule_action_fold")
+            supersede, deactivate, set_sig, fold = st.columns(4)
             if set_sig.form_submit_button("Set signature"):
                 _act(base, pin, f"/{rule_id}/signature", {"signature": parse_signature(signature)}, lambda r: f"{r.get('rule_id')} signature updated")
+            if fold.form_submit_button("Fold into brief"):
+                if not fold_version.strip():
+                    st.info("Enter the brief version the rule was folded into.")
+                else:
+                    _act(base, pin, f"/{rule_id}/fold", {"brief_version": fold_version.strip()}, lambda r: f"{r.get('rule_id')} folded into {r.get('brief_version')} · archived when it deploys")
             if supersede.form_submit_button("Supersede", type="primary"):
                 if len(text.strip()) < 20:
                     st.info("Replacement text needs at least 20 characters.")

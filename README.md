@@ -25,7 +25,8 @@ obsidian black base, electric blue navigation and restrained copper-orange accen
 - **Rules** (Owner PIN) — pending rule drafts to approve, edit or reject;
   active rules with their calibration state (working, ignored, misapplied,
   dormant); supersede or deactivate a rule; set the signature calibration
-  uses to decide where a rule applies.
+  uses to decide where a rule applies; mark a rule as folded into a brief
+  version so it archives when that brief deploys.
 - **Calibration** (Owner PIN) — the monthly scoreboard: headline agreement
   with the delta vs last month, trend since inception, worst three
   dimensions, most improved, rules by state, drill-down to the underlying
