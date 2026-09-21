@@ -15,6 +15,16 @@ import requests
 import streamlit as st
 
 from universe_view import render_universe
+from rules_view import render_rules_view
+from grading_ui import (
+    context_table,
+    feed_options,
+    fetch_grade_context,
+    fetch_vocabulary,
+    grade_widgets,
+    rejected_options,
+    submit as submit_grade_form,
+)
 
 from dashboard_utils import (
     MIN_TIME,
@@ -269,25 +279,16 @@ def render_rejected(items) -> str:
     return f'<div class="rejected-feed">{"".join(rows)}</div>' if rows else ""
 
 
-def handle_grade_response(response, success_message: str):
-    if response.status_code == 200:
-        st.success(success_message)
-    elif response.status_code == 403:
-        st.error("Bad PIN.")
-    elif response.status_code == 404:
-        st.error("That item is no longer available.")
-    else:
-        st.error(f"Error {response.status_code}: {response.text[:200]}")
-
-
 def grading_panel(post_type, post):
+    """One grade at a time for the selected item of this edition (inside its form)."""
     post_id = post.get("id")
     if post_id is None:
         return
 
     graded = int(post.get("graded") or 0)
     timestamp = fmt_short_time(str(post.get("posted_at") or ""))
-    label = f"Rated {graded} · {timestamp}" if graded else f"Rate digest · {timestamp}"
+    label = f"Graded {graded} · {timestamp}" if graded else f"Grade an item · {timestamp}"
+    key = f"{post_type}_{post_id}"
 
     with st.container():
         st.markdown(
@@ -297,125 +298,44 @@ def grading_panel(post_type, post):
         if not str(st.session_state.get("grader_pin", "")).strip():
             st.caption("Enter the grader PIN in Owner mode at the top of the feed.")
 
-        for item in sorted(post.get("items") or [], key=item_rank_key):
-            rank = item.get("rank")
-            if rank is None:
-                continue
-            preview = str(item.get("headline") or item.get("text") or "")
-            st.radio(
-                f"{rank}. {preview[:96]}",
-                ["–", "👍", "👎"],
-                horizontal=True,
-                key=f"g_{post_type}_{post_id}_{rank}",
+        options, ungradable = feed_options(post)
+        if ungradable:
+            st.caption(
+                "Not gradable with the new form (edition predates event ids): "
+                + ", ".join(f"#{rank}" for rank in ungradable)
             )
+        if not options:
+            st.caption("Nothing in this edition can be graded.")
+            return
+        context = fetch_grade_context(WORKER_URL, tuple(o["event_id"] for o in options))
+        st.markdown(context_table(options, context), unsafe_allow_html=True)
+        vocab = fetch_vocabulary(WORKER_URL)
+        grade_widgets(key, options, vocab)
 
-        st.text_area(
-            "Note to the ranking engine (optional)",
-            key=f"note_{post_type}_{post_id}",
-            placeholder="e.g. item 4 was noise · the Kodiak item deserved #1",
-            height=80,
-        )
-
-        if st.form_submit_button("Submit grades", type="primary"):
-            pin = str(st.session_state.get("grader_pin", "")).strip()
-            if not pin:
-                st.warning("Enter the grader PIN in Owner mode first.")
-                return
-
-            grades = []
-            for item in post.get("items") or []:
-                rank = item.get("rank")
-                verdict = st.session_state.get(f"g_{post_type}_{post_id}_{rank}")
-                if verdict == "👍":
-                    grades.append({"rank": rank, "verdict": "up"})
-                elif verdict == "👎":
-                    grades.append({"rank": rank, "verdict": "down"})
-
-            note = str(st.session_state.get(f"note_{post_type}_{post_id}", "")).strip()
-            if not grades and not note:
-                st.info("Nothing to submit — rate an item or write a note.")
-                return
-
-            try:
-                response = requests.post(
-                    f"{WORKER_URL}/grade",
-                    json={
-                        "pin": pin,
-                        "post_type": post_type,
-                        "post_id": post_id,
-                        "grades": grades,
-                        "note": note,
-                    },
-                    timeout=10,
-                )
-                stored = response.json().get("stored", len(grades)) if response.status_code == 200 else 0
-                handle_grade_response(
-                    response,
-                    f"Stored {stored} — the next digest run will absorb the feedback.",
-                )
-            except Exception as exc:
-                st.error(f"Could not reach the aggregator: {exc}")
+        if st.form_submit_button("Submit grade", type="primary"):
+            submit_grade_form(WORKER_URL, post_type, int(post_id), key, vocab)
 
 
 def rejected_grading_panel(items, scope_key: str):
-    item_map = {
-        int(item["id"]): item
-        for item in items
-        if item.get("id") is not None and str(item.get("id")).isdigit()
-    }
-    if not item_map:
+    options = rejected_options(items)
+    if not options:
         return
 
+    key = f"rejected_{scope_key}"
     with st.container(border=True):
         st.markdown(
             '<div class="rejected-grader-title">Grade a rejected item</div>'
-            '<div class="rejected-grader-copy">Choose an item from this page, '
-            "confirm whether it should have ranked, and optionally explain why.</div>",
+            '<div class="rejected-grader-copy">Choose an item from this page, score it '
+            "against the grader's decision, and name the reason.</div>",
             unsafe_allow_html=True,
         )
+        context = fetch_grade_context(WORKER_URL, tuple(o["event_id"] for o in options))
+        st.markdown(context_table(options, context), unsafe_allow_html=True)
+        vocab = fetch_vocabulary(WORKER_URL)
         with st.form(f"rejected_grading_{scope_key}", border=False):
-            selected_id = st.selectbox(
-                "Rejected item",
-                list(item_map),
-                format_func=lambda item_id: (
-                    f"#{item_id} · {str(item_map[item_id].get('title') or '')[:88]}"
-                ),
-            )
-            verdict = st.radio(
-                "Verdict",
-                ["👍 should have ranked", "👎 correct rejection"],
-                horizontal=True,
-            )
-            note = st.text_area(
-                "Written feedback (optional)",
-                height=80,
-                placeholder="e.g. this major partnership should have ranked",
-            )
-
-            submitted = st.form_submit_button("Submit grade", type="primary")
-            if submitted:
-                pin = str(st.session_state.get("grader_pin", "")).strip()
-                if not pin:
-                    st.warning("Enter the grader PIN in Owner mode first.")
-                    return
-                try:
-                    response = requests.post(
-                        f"{WORKER_URL}/grade",
-                        json={
-                            "pin": pin,
-                            "post_type": "rejected",
-                            "post_id": int(selected_id),
-                            "verdict": "up" if verdict.startswith("👍") else "down",
-                            "note": str(note).strip(),
-                        },
-                        timeout=10,
-                    )
-                    handle_grade_response(
-                        response,
-                        "Grade stored — the next digest run will absorb the feedback.",
-                    )
-                except Exception as exc:
-                    st.error(f"Could not reach the aggregator: {exc}")
+            grade_widgets(key, options, vocab)
+            if st.form_submit_button("Submit grade", type="primary"):
+                submit_grade_form(WORKER_URL, "rejected", 0, key, vocab)
 
 
 def load_more_button(state_key: str, total: int, step: int, label: str):
@@ -644,6 +564,8 @@ def render_dashboard(view):
             render_feed(data)
     elif view == "Rejected":
         render_rejected_view()
+    elif view == "Rules":
+        render_rules_view(WORKER_URL)
     else:
         render_universe(WORKER_URL)
 
@@ -657,7 +579,7 @@ def render_live_dashboard(view):
 navigation, search_control, owner_control = st.columns([3, 1, 1], gap="small", vertical_alignment="center")
 with navigation:
     view = st.radio(
-        "Dashboard view", ["Feed", "Rejected", "Universe"], horizontal=True,
+        "Dashboard view", ["Feed", "Rejected", "Rules", "Universe"], horizontal=True,
         label_visibility="collapsed", key="dashboard_view",
     )
 with search_control:
@@ -667,7 +589,7 @@ with search_control:
 with owner_control:
     render_owner_panel(None)
 # Owner editing has no periodic rerun: unsaved form values remain stable.
-if view == "Universe":
+if view in ("Universe", "Rules"):
     render_dashboard(view)
 else:
     render_live_dashboard(view)
