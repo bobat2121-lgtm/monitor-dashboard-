@@ -168,17 +168,62 @@ def render_rules(base, pin, rules, include_inactive):
                 _act(base, pin, f"/{rule_id}/deactivate", {}, lambda r: f"{r.get('rule_id')} deactivated")
 
 
+@st.cache_data(ttl=300, show_spinner=False)
+def fetch_guides(base):
+    """The monthly-audit and how-to-grade pages, served by the aggregator from
+    the same files as its runbook so this tab never drifts from it."""
+    try:
+        response = requests.get(f"{base}/grades/guide", timeout=15)
+        if response.status_code != 200:
+            return {}
+        return dict((response.json() or {}).get("guides") or {})
+    except Exception:
+        return {}
+
+
+def render_guide(guides, key, fallback_title):
+    guide = (guides or {}).get(key) or {}
+    text = str(guide.get("text") or "").strip()
+    if text:
+        st.markdown(text)
+    else:
+        st.markdown(f"### {fallback_title}")
+        st.caption("Guide unavailable: the aggregator did not serve it. The canonical page is in the aggregator repo under docs/.")
+
+
 def render_rules_view(base):
+    from calibration_view import fetch_summary, render_audit, render_calibration_sections
+
     pin = str(st.session_state.get("grader_pin", "")).strip()
     if not pin:
         st.markdown('<div class="empty-state">Open Owner mode and enter the grader PIN to manage rules.</div>', unsafe_allow_html=True)
         return
-    include_inactive = st.checkbox("Show inactive and superseded rules", key="rules_include_inactive")
+    guides = fetch_guides(base)
+    drafts_tab, calibration_tab, audit_tab, grade_tab = st.tabs(["Drafts and rules", "Calibration", "Monthly audit", "How to grade"])
+
+    with drafts_tab:
+        include_inactive = st.checkbox("Show inactive and superseded rules", key="rules_include_inactive")
+        try:
+            drafts = api(base, pin, "/drafts?status=pending")["drafts"]
+            rules = api(base, pin, "?include=inactive" if include_inactive else "")["rules"]
+        except ValueError as exc:
+            st.error(str(exc))
+        else:
+            render_drafts(base, pin, drafts)
+            render_rules(base, pin, rules, include_inactive)
+
+    summary = None
     try:
-        drafts = api(base, pin, "/drafts?status=pending")["drafts"]
-        rules = api(base, pin, "?include=inactive" if include_inactive else "")["rules"]
+        summary = fetch_summary(base, pin)
     except ValueError as exc:
-        st.error(str(exc))
-        return
-    render_drafts(base, pin, drafts)
-    render_rules(base, pin, rules, include_inactive)
+        with calibration_tab:
+            st.error(str(exc))
+    with calibration_tab:
+        if summary:
+            render_calibration_sections(base, pin, summary)
+    with audit_tab:
+        render_guide(guides, "monthly_audit", "Monthly audit — 20 minutes")
+        if summary:
+            render_audit(base, pin, summary)
+    with grade_tab:
+        render_guide(guides, "how_to_grade", "How to grade")

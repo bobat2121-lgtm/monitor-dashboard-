@@ -22,15 +22,14 @@ obsidian black base, electric blue navigation and restrained copper-orange accen
   noon, 5pm, and 7pm ET), newest first.
 - **Rejected** — the audit and feedback lane for reviewed candidates that were
   not selected for an edition.
-- **Rules** (Owner PIN) — pending rule drafts to approve, edit or reject;
-  active rules with their calibration state (working, ignored, misapplied,
-  dormant); supersede or deactivate a rule; set the signature calibration
-  uses to decide where a rule applies; mark a rule as folded into a brief
-  version so it archives when that brief deploys.
-- **Calibration** (Owner PIN) — the monthly scoreboard: headline agreement
-  with the delta vs last month, trend since inception, worst three
-  dimensions, most improved, rules by state, drill-down to the underlying
-  grades, and the form for this month's audit and next month's focus.
+- **Rules** (Owner PIN) — one tab, four sections: **Drafts and rules**
+  (pending drafts to approve, edit or reject; active rules with their
+  calibration state; supersede, deactivate, set signature, fold into a brief
+  version), **Calibration** (the monthly scoreboard: headline and delta,
+  trend, worst three, most improved, rules by state, drill-down),
+  **Monthly audit** (the 20-minute checklist with the audit and focus form)
+  and **How to grade** (the grading principles). The two guide pages are
+  served by the aggregator from its runbook files, so they never drift.
 
 Data comes from a public read-only JSON endpoint (`/digests`) served by a
 Cloudflare Worker. Ranking and editorial summaries are produced by the

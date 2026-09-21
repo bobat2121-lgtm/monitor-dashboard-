@@ -196,19 +196,14 @@ def render_audit(base, pin, summary):
                     st.success(f"Audit #{result.get('id')} saved for {month}{extra}")
 
 
-def render_calibration_view(base):
-    pin = str(st.session_state.get("grader_pin", "")).strip()
-    if not pin:
-        st.markdown('<div class="empty-state">Open Owner mode and enter the grader PIN to see calibration.</div>', unsafe_allow_html=True)
-        return
-    try:
-        summary = api(base, pin, "/summary")
-    except ValueError as exc:
-        st.error(str(exc))
-        return
+def render_calibration_sections(base, pin, summary):
+    """Headline, trend, worst/improved, rules and drill-down (no audit form)."""
     render_headline(summary)
     render_trend(summary)
     render_worst_and_improved(summary)
     render_rules(summary)
     render_drilldown(base, pin, summary)
-    render_audit(base, pin, summary)
+
+
+def fetch_summary(base, pin):
+    return api(base, pin, "/summary")

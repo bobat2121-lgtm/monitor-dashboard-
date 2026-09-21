@@ -16,7 +16,6 @@ import streamlit as st
 
 from universe_view import render_universe
 from rules_view import render_rules_view
-from calibration_view import render_calibration_view
 from grading_ui import (
     context_table,
     feed_options,
@@ -567,8 +566,6 @@ def render_dashboard(view):
         render_rejected_view()
     elif view == "Rules":
         render_rules_view(WORKER_URL)
-    elif view == "Calibration":
-        render_calibration_view(WORKER_URL)
     else:
         render_universe(WORKER_URL)
 
@@ -582,7 +579,7 @@ def render_live_dashboard(view):
 navigation, search_control, owner_control = st.columns([3, 1, 1], gap="small", vertical_alignment="center")
 with navigation:
     view = st.radio(
-        "Dashboard view", ["Feed", "Rejected", "Rules", "Calibration", "Universe"], horizontal=True,
+        "Dashboard view", ["Feed", "Rejected", "Rules", "Universe"], horizontal=True,
         label_visibility="collapsed", key="dashboard_view",
     )
 with search_control:
@@ -592,7 +589,7 @@ with search_control:
 with owner_control:
     render_owner_panel(None)
 # Owner editing has no periodic rerun: unsaved form values remain stable.
-if view in ("Universe", "Rules", "Calibration"):
+if view in ("Universe", "Rules"):
     render_dashboard(view)
 else:
     render_live_dashboard(view)
