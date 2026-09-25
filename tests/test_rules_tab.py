@@ -116,6 +116,8 @@ class RulesTabTests(unittest.TestCase):
             return StubResponse({"ok": True, "superseded": "R-0001", "rule_id": "R-0004"})
         if url.endswith("/fold"):
             return StubResponse({"ok": True, "rule_id": "R-0001", "brief_version": "2026.10.1"})
+        if url.endswith("/drop"):
+            return StubResponse({"ok": True, "draft_id": int(url.split("/")[-2]), "dropped": "R-0034", "status": "approved"})
         if url.endswith("/calibration/audit"):
             return StubResponse({"ok": True, "id": 1, "month": "2026-09", "standing_instruction_id": 23})
         return StubResponse({"ok": True})
@@ -313,6 +315,33 @@ class RulesTabTests(unittest.TestCase):
         self.assertEqual([c[1].split("/")[-2] for c in approvals], ["21", "22"])
         self.assertTrue(all(c[2] == {} for c in approvals), "an empty body signs off the proposal as written")
         self.assertTrue(any("Approved 2 signature updates" in s.value for s in app.success))
+
+    def test_a_proposed_drop_is_signed_off_as_a_drop_never_as_an_approval(self):
+        drop = {"id": 41, "created_at": "2026-09-25T18:00:00Z", "run_id": "owner-revision", "text": "A new drone unveiling is not a digest item.",
+                "raw_text": "A new drone unveiling is not a digest item.", "target_rule_id": "R-0034", "status": "pending", "refine_status": "proposed",
+                "refine_round": 1, "signature": {}, "source_feedback_ids": [], "owner_feedback": [],
+                "proposal": {"action": "drop", "rationale": "Fully covered by R-0001; it never changes a decision.", "duplicate_of": "R-0001",
+                             "overlaps": [], "conflicts": [], "supersedes": "R-0034"}}
+        retire = {**drop, "id": 42, "run_id": "reviewer-drop", "target_rule_id": "R-0012", "proposal": {**drop["proposal"], "duplicate_of": None, "supersedes": "R-0012"}}
+        self.drafts = [drop, retire]
+        app = self.start()
+        page = self.rendered(app)
+        self.assertIn("ChatGPT proposes dropping R-0034", page)
+        self.assertIn("covered by R-0001", page)
+        self.assertIn("ChatGPT proposes retiring R-0012", page)
+        self.assertIn("2 proposed drops", "\n".join(c.value for c in app.caption))
+        self.assertFalse(any("Signature-only" in e.label for e in app.expander), "a drop is never a signature-only update")
+        form = next(f for f in app.get("form") if f.proto.form.form_id == "drop_41")
+        self.assertFalse(any(b.label == "Approve" for b in form.button))
+        next(b for b in form.button if b.label == "Drop R-0034").click().run()
+        self.assertEqual(list(app.exception), [])
+        self.assertTrue(next(c for c in self.calls if c[0] == "POST")[1].endswith("/rules/drafts/41/drop"))
+        self.assertTrue(any("Dropped R-0034" in s.value for s in app.success))
+
+        form = next(f for f in app.get("form") if f.proto.form.form_id == "drop_42")
+        next(b for b in form.button if b.label == "Keep R-0012").click().run()
+        self.assertTrue([c for c in self.calls if c[0] == "POST"][-1][1].endswith("/rules/drafts/42/reject"))
+        self.assertTrue(any("Kept R-0012, unchanged" in s.value for s in app.success))
 
     def test_audit_form_posts_summary_and_focus(self):
         app = self.start()

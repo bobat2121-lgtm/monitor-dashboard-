@@ -119,6 +119,8 @@ def effect_inputs(key: str, effect) -> tuple:
 
 def draft_origin(draft) -> str:
     run_id = str(draft.get("run_id") or "")
+    if run_id == "reviewer-drop":
+        return f"ChatGPT proposes retiring {draft.get('target_rule_id')}"
     if draft.get("target_rule_id"):
         return f"revision of {draft['target_rule_id']}"
     if run_id == "owner":
@@ -187,8 +189,64 @@ def proposal_chips(proposal, target=None) -> str:
     return '<div class="refine-chips">' + "".join(chips) + "</div>"
 
 
+def is_drop(draft) -> bool:
+    return (draft.get("proposal") or {}).get("action") == "drop"
+
+
+def render_drop_proposal(base, pin, draft):
+    """ChatGPT proposes dropping instead of rewriting; the owner decides."""
+    draft_id = draft.get("id")
+    proposal = draft.get("proposal") or {}
+    target = draft.get("target_rule_id")
+    subject = target or "this draft"
+    chips = []
+    if proposal.get("duplicate_of"):
+        chips.append(f'<span class="refine-chip warn">covered by {html.escape(proposal["duplicate_of"])}</span>')
+    for rule_id in proposal.get("conflicts") or []:
+        chips.append(f'<span class="refine-chip warn">conflicts with {html.escape(rule_id)}</span>')
+    for rule_id in proposal.get("overlaps") or []:
+        chips.append(f'<span class="refine-chip">overlaps {html.escape(rule_id)}</span>')
+    with st.container(border=True):
+        st.markdown(
+            f'<div class="rule-meta">Draft #{draft_id} · {html.escape(draft_origin(draft))} · '
+            f'round {draft.get("refine_round") or 1} · ChatGPT proposes dropping {html.escape(subject)}</div>',
+            unsafe_allow_html=True,
+        )
+        rule, reason = st.columns(2)
+        rule.markdown(
+            f'<div class="refine-label">{"The rule" if target else "Your words"}</div>'
+            f'<div class="refine-owner">{html.escape(str(draft.get("raw_text") or draft.get("text") or ""))}</div>'
+            + feedback_html(draft),
+            unsafe_allow_html=True,
+        )
+        reason.markdown(
+            "<div class=\"refine-label\">Why ChatGPT would drop it</div>"
+            f'<div class="rule-text">{html.escape(str(proposal.get("rationale") or ""))}</div>'
+            + ('<div class="refine-chips">' + "".join(chips) + "</div>" if chips else ""),
+            unsafe_allow_html=True,
+        )
+        with st.form(f"drop_{draft_id}", border=False):
+            if target:
+                st.caption(f"Dropping retires {target}: it moves to inactive rules and can be reactivated. Keeping leaves it exactly as it is.")
+            note = st.text_input("Or send back for a rewrite (what should the rule say?)", key=f"drop_note_{draft_id}")
+            drop, keep, rewrite = st.columns(3)
+            if drop.form_submit_button(f"Drop {subject}", type="primary"):
+                _act(base, pin, f"/drafts/{draft_id}/drop", {},
+                     lambda r: f"Dropped {r['dropped']} · reactivate it from inactive rules if needed" if r.get("dropped") else f"Draft #{draft_id} dropped")
+            if keep.form_submit_button(f"Keep {subject}"):
+                _act(base, pin, f"/drafts/{draft_id}/reject", {}, lambda r: f"Kept {target}, unchanged" if target else f"Draft #{draft_id} closed")
+            if rewrite.form_submit_button("Rewrite instead"):
+                if len(note.strip()) < 5:
+                    st.info("Add a note saying what the rule should say, so the rewrite answers exactly that.")
+                else:
+                    _act(base, pin, f"/drafts/{draft_id}/refine", {"feedback": note.strip()}, lambda r: f"Draft #{draft_id} sent back · {WAIT_NOTE}")
+
+
 def render_proposal(base, pin, draft):
     """ChatGPT's rewrite beside the owner's words, with the sign-off form."""
+    if is_drop(draft):
+        render_drop_proposal(base, pin, draft)
+        return
     draft_id = draft.get("id")
     proposal = draft.get("proposal") or {}
     target = draft.get("target_rule_id")
@@ -299,8 +357,11 @@ def render_drafts(base, pin, drafts):
     queued = [d for d in drafts if d.get("refine_status") == "queued"]
     plain = [d for d in drafts if d.get("refine_status") not in ("proposed", "queued")]
     signature_only = [d for d in proposed if is_signature_only(d)]
+    drops = [d for d in proposed if is_drop(d)]
     if proposed or queued:
-        st.caption(f"{len(proposed)} ready to sign off · {len(queued)} waiting for ChatGPT's rewrite")
+        st.caption(f"{len(proposed)} ready to sign off"
+                   + (f" ({len(drops)} proposed drop{'s' if len(drops) != 1 else ''})" if drops else "")
+                   + f" · {len(queued)} waiting for ChatGPT's rewrite")
     if signature_only:
         render_signature_only(base, pin, signature_only)
     for draft in proposed:
@@ -325,8 +386,8 @@ def is_signature_only(draft) -> bool:
     """A revision whose rewrite keeps the rule's text and sets no score bounds:
     approving it only changes when the rule applies, not what it says."""
     proposal = draft.get("proposal") or {}
-    return bool(draft.get("target_rule_id")) and normalized(proposal.get("text")) == normalized(draft.get("raw_text")) \
-        and not proposal.get("effect")
+    return bool(draft.get("target_rule_id")) and not is_drop(draft) \
+        and normalized(proposal.get("text")) == normalized(draft.get("raw_text")) and not proposal.get("effect")
 
 
 def render_signature_only(base, pin, drafts):
