@@ -143,11 +143,12 @@ def grade_widgets(key: str, options: list[dict], vocab: Mapping[str, Any]) -> No
     st.selectbox("Reason code", list(vocab.get("reason_codes") or REASON_CODES), key=f"greason_{key}")
     st.radio(
         "Scope", ["item", "rule"], horizontal=True, key=f"gscope_{key}",
-        help="item: this event only. rule: a principle you would apply unseen; it becomes a pending draft rule for you to approve.",
+        help="item: this event only. rule: a principle you would apply unseen. Write it however it comes out; "
+             "ChatGPT rewrites it as a universal rule and you sign it off on the Rules tab.",
     )
     st.text_area(
         "Note (optional for an item, required for a rule)", key=f"note_{key}", height=80,
-        placeholder="State the principle, then the instance. Name the boundary.",
+        placeholder="State the principle, then the instance. Name the boundary. For a rule, your own words are fine.",
     )
 
 
@@ -178,7 +179,7 @@ def handle_response(response) -> None:
     if response.status_code == 200:
         grade = body.get("grade") or {}
         draft = body.get("rule_draft_id")
-        suffix = f" · draft rule #{draft} pending your approval" if draft else ""
+        suffix = f" · draft rule #{draft} queued for ChatGPT's rewrite; sign it off on the Rules tab" if draft else ""
         st.success(f"Stored grade #{body.get('id')} · {grade.get('target_score')} {grade.get('target_action')}{suffix}")
     elif response.status_code == 403:
         st.error("Bad PIN.")

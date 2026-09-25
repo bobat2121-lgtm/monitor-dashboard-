@@ -166,3 +166,9 @@ html, body, button, input, textarea, [data-testid="stAppViewContainer"] {
 .rule-badge { font:10px/1 var(--font-mono); letter-spacing:1px; text-transform:uppercase; color:#fff; padding:4px 7px; border-radius:4px; }
 .rule-text { font-size:14px; line-height:1.55; color:var(--digest-text); }
 .rule-meta { font-size:11px; color:var(--digest-text-muted); margin-top:4px; }
+.refine-label { font:10px/1.5 var(--font-mono); letter-spacing:1.2px; text-transform:uppercase; color:var(--digest-text-secondary); margin-bottom:6px; }
+.refine-owner { font-size:14px; line-height:1.55; color:var(--digest-text-muted); font-style:italic; }
+.refine-note { font-size:12px; line-height:1.5; color:var(--digest-text-muted); margin-top:6px; }
+.refine-chips { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
+.refine-chip { font:10px/1 var(--font-mono); color:var(--digest-text-secondary); border:1px solid var(--digest-border); padding:4px 7px; border-radius:4px; }
+.refine-chip.warn { color:#f6ad55; border-color:#c05621; }
