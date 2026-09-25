@@ -6,7 +6,7 @@ import streamlit as st
 from streamlit.testing.v1 import AppTest
 
 from calibration_view import delta_text, pct
-from rules_view import parse_signature, sort_rules
+from rules_view import draft_origin, effect_payload, effect_text, parse_signature, signature_value, sort_rules
 
 
 APP_PATH = Path(__file__).resolve().parents[1] / "streamlit_app.py"
@@ -30,6 +30,18 @@ RULES = [
 ]
 DRAFTS = [
     {"id": 7, "created_at": "2026-09-21T12:00:00Z", "run_id": "distill-2026-09-21", "text": "Robotaxi launches by major operators are digest items; score 70 or more.", "signature": {"workers": ["robotaxi-monitor"], "keywords": ["waymo"]}, "source_feedback_ids": [73], "status": "pending"},
+]
+JUMBLE = "the navy usv marketplace thing should have been lead, opening a program to new vendors is huge"
+REWRITE = "A government program that opens production qualification to new vendors of an autonomous system is a digest item (70+), and leads when it names a program of record."
+REFINE_DRAFTS = [
+    {"id": 8, "created_at": "2026-09-24T20:00:00Z", "run_id": "owner", "text": JUMBLE, "raw_text": JUMBLE, "event_id": 900, "status": "pending",
+     "refine_status": "proposed", "refine_round": 1, "signature": {}, "source_feedback_ids": [], "owner_feedback": [],
+     "proposal": {"text": REWRITE, "signature": {"workers": [], "tickers": [], "categories": [], "keywords": ["marketplace", "qualification"]},
+                  "effect": {"min_score": 70}, "rationale": "Generalized from the Navy USV marketplace to any autonomy program opening to new vendors.",
+                  "overlaps": ["R-0002"], "conflicts": [], "supersedes": "R-0001"}},
+    {"id": 9, "created_at": "2026-09-24T21:00:00Z", "run_id": None, "text": "drone unveilings are noise unless someone buys them", "raw_text": "drone unveilings are noise unless someone buys them",
+     "status": "pending", "refine_status": "queued", "refine_round": 0, "signature": {}, "source_feedback_ids": [80],
+     "owner_feedback": [], "proposal": None},
 ]
 
 
@@ -61,6 +73,7 @@ class RulesTabTests(unittest.TestCase):
         self.addCleanup(st.cache_data.clear)
         self.calls = []
         self.guides = GUIDES
+        self.drafts = DRAFTS
         get_patch = patch("requests.get", side_effect=self.fake_get)
         get_patch.start(); self.addCleanup(get_patch.stop)
         post_patch = patch("requests.post", side_effect=self.fake_post)
@@ -75,7 +88,7 @@ class RulesTabTests(unittest.TestCase):
         if url.endswith("/grades/guide"):
             return StubResponse(self.guides, 200 if self.guides else 503)
         if "/rules/drafts" in url:
-            return StubResponse({"ok": True, "drafts": DRAFTS})
+            return StubResponse({"ok": True, "drafts": self.drafts})
         if "/rules" in url:
             return StubResponse({"ok": True, "rules": RULES, "pending_drafts": 1})
         if "/calibration/summary" in url:
@@ -89,7 +102,16 @@ class RulesTabTests(unittest.TestCase):
     def fake_post(self, url, **kwargs):
         self.calls.append(("POST", url, kwargs.get("json")))
         if url.endswith("/approve"):
-            return StubResponse({"ok": True, "rule_id": "R-0003", "distilled": 1, "precedent_id": 9})
+            payload = kwargs.get("json") or {}
+            return StubResponse({"ok": True, "rule_id": "R-0003", "distilled": 1, "precedent_id": 9, "superseded": payload.get("supersedes")})
+        if url.endswith("/rules/drafts"):
+            return StubResponse({"ok": True, "draft_id": 12, "duplicate": False, "refine_status": "queued"})
+        if url.endswith("/rules/refine-missing"):
+            return StubResponse({"ok": True, "queued": 1, "remaining": 0})
+        if url.endswith("/refine") and "/rules/drafts/" not in url:
+            return StubResponse({"ok": True, "rule_id": url.split("/")[-2], "draft_id": 13, "refine_status": "queued"})
+        if url.endswith("/effect"):
+            return StubResponse({"ok": True, "rule_id": url.split("/")[-2], "effect": (kwargs.get("json") or {}).get("effect")})
         if url.endswith("/supersede"):
             return StubResponse({"ok": True, "superseded": "R-0001", "rule_id": "R-0004"})
         if url.endswith("/fold"):
@@ -181,6 +203,93 @@ class RulesTabTests(unittest.TestCase):
         fold = [c for c in self.calls if c[0] == "POST" and c[1].endswith("/fold")]
         self.assertEqual(fold[0][2], {"brief_version": "2026.10.1"})
         self.assertTrue(any("folded into 2026.10.1" in s.value for s in app.success))
+
+    def test_refinement_helpers(self):
+        self.assertEqual(signature_value({"workers": ["a", "b"], "tickers": [], "keywords": ["k"]}), "workers: a, b; keywords: k")
+        self.assertEqual(parse_signature(signature_value({"workers": ["a"], "keywords": ["x y"]})), {"workers": ["a"], "keywords": ["x y"]})
+        self.assertEqual(effect_payload(None, None), None)
+        self.assertEqual(effect_payload(70, None), {"min_score": 70})
+        self.assertEqual(effect_text({"min_score": 70, "max_score": 95}), "score floor 70 · score ceiling 95")
+        self.assertEqual(draft_origin({"run_id": "owner"}), "written on the Rules tab")
+        self.assertEqual(draft_origin({"run_id": None}), "rule-scoped grade")
+        self.assertEqual(draft_origin({"run_id": "owner-revision", "target_rule_id": "R-0001"}), "revision of R-0001")
+
+    def test_proposal_shows_both_versions_and_approves_the_rewrite(self):
+        self.drafts = REFINE_DRAFTS
+        app = self.start()
+        rendered = self.rendered(app)
+        self.assertIn("1 ready to sign off · 1 waiting for ChatGPT's rewrite", "\n".join(c.value for c in app.caption))
+        for text in ("Your words", JUMBLE, "ChatGPT's rule", REWRITE, "Generalized from the Navy", "would replace R-0001",
+                     "overlaps R-0002", "score floor 70", "waiting for ChatGPT's rewrite", "drone unveilings are noise"):
+            self.assertIn(text, rendered)
+        self.assertEqual(app.text_area("proposal_text_8").value, REWRITE)
+        self.assertEqual(app.number_input("proposal_8_floor").value, 70)
+        form = next(f for f in app.get("form") if f.proto.form.form_id == "proposal_8")
+        next(b for b in form.button if b.label == "Approve").click().run()
+        self.assertEqual(list(app.exception), [])
+        post = next(c for c in self.calls if c[0] == "POST")
+        self.assertTrue(post[1].endswith("/rules/drafts/8/approve"))
+        self.assertEqual(post[2], {"text": REWRITE, "signature": {"keywords": ["marketplace", "qualification"]}, "effect": {"min_score": 70}})
+        self.assertTrue(any("Approved as R-0003" in s.value for s in app.success))
+
+        # Replacing the rule the rewrite names is an explicit choice.
+        app.checkbox("proposal_replace_8").check()
+        form = next(f for f in app.get("form") if f.proto.form.form_id == "proposal_8")
+        next(b for b in form.button if b.label == "Approve").click().run()
+        approve = [c for c in self.calls if c[0] == "POST" and c[1].endswith("/8/approve")][-1]
+        self.assertEqual(approve[2]["supersedes"], "R-0001")
+        self.assertTrue(any("replaces R-0001" in s.value for s in app.success))
+
+    def test_send_back_needs_a_note_and_posts_it(self):
+        self.drafts = REFINE_DRAFTS
+        app = self.start()
+        form = next(f for f in app.get("form") if f.proto.form.form_id == "proposal_8")
+        next(b for b in form.button if b.label == "Send back to ChatGPT").click().run()
+        self.assertFalse(any(c[0] == "POST" for c in self.calls))
+        app.text_input("proposal_note_8").set_value("Too broad: maritime and air programs only.")
+        form = next(f for f in app.get("form") if f.proto.form.form_id == "proposal_8")
+        next(b for b in form.button if b.label == "Send back to ChatGPT").click().run()
+        post = next(c for c in self.calls if c[0] == "POST")
+        self.assertTrue(post[1].endswith("/rules/drafts/8/refine"))
+        self.assertEqual(post[2], {"feedback": "Too broad: maritime and air programs only."})
+
+    def test_queued_draft_can_be_approved_as_written_or_withdrawn(self):
+        self.drafts = REFINE_DRAFTS
+        app = self.start()
+        form = next(f for f in app.get("form") if f.proto.form.form_id == "queued_9")
+        next(b for b in form.button if b.label == "Withdraw").click().run()
+        self.assertTrue(next(c for c in self.calls if c[0] == "POST")[1].endswith("/rules/drafts/9/reject"))
+
+    def test_composer_sends_owner_words_with_the_item(self):
+        app = self.start()
+        form = next(f for f in app.get("form") if f.proto.form.form_id == "rule_composer")
+        next(b for b in form.button if b.label == "Send to ChatGPT for a rewrite").click().run()
+        self.assertFalse(any(c[0] == "POST" for c in self.calls), "empty text is not sent")
+        app.text_area("composer_text").set_value(JUMBLE)
+        app.number_input("composer_event").set_value(900)
+        form = next(f for f in app.get("form") if f.proto.form.form_id == "rule_composer")
+        next(b for b in form.button if b.label == "Send to ChatGPT for a rewrite").click().run()
+        post = next(c for c in self.calls if c[0] == "POST")
+        self.assertTrue(post[1].endswith("/rules/drafts"))
+        self.assertEqual(post[2], {"text": JUMBLE, "event_id": 900})
+        self.assertTrue(any("Draft #12 queued for ChatGPT" in s.value for s in app.success))
+
+    def test_signature_pass_revise_and_score_bounds(self):
+        app = self.start()
+        self.assertIn("1 active rule has no signature", "\n".join(c.value for c in app.caption))
+        app.button("rules_signature_pass").click().run()
+        self.assertTrue(any(c[0] == "POST" and c[1].endswith("/rules/refine-missing") for c in self.calls))
+        app.text_input("rule_action_revise").set_value("Add a boundary for reposts.")
+        form = next(f for f in app.get("form") if f.proto.form.form_id == "rule_action")
+        next(b for b in form.button if b.label == "Ask ChatGPT to revise").click().run()
+        revise = [c for c in self.calls if c[0] == "POST" and c[1].endswith("/refine")][-1]
+        self.assertTrue(revise[1].endswith("/rules/R-0001/refine")); self.assertEqual(revise[2], {"feedback": "Add a boundary for reposts."})
+        app.number_input("rule_action_ceiling").set_value(39)
+        form = next(f for f in app.get("form") if f.proto.form.form_id == "rule_action")
+        next(b for b in form.button if b.label == "Set score bounds").click().run()
+        bounds = [c for c in self.calls if c[0] == "POST" and c[1].endswith("/effect")][-1]
+        self.assertEqual(bounds[2], {"effect": {"max_score": 39}})
+        self.assertTrue(any("score ceiling 39" in s.value for s in app.success))
 
     def test_audit_form_posts_summary_and_focus(self):
         app = self.start()
