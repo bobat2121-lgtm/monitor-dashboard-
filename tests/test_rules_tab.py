@@ -158,7 +158,7 @@ class RulesTabTests(unittest.TestCase):
         metric = next(m for m in app.metric if m.label == "Action agreement")
         self.assertEqual(metric.value, "67%"); self.assertEqual(metric.delta, "+17 pts vs prior month")
         self.assertEqual(len(app.get("plotly_chart")), 2)
-        self.assertTrue(any("Waymo now testing" in t.value.to_string() for t in app.get("table")))
+        self.assertTrue(any("Waymo now testing" in t.value.to_string() for t in [*app.get("table"), *app.get("arrow_table")]))
         # Guides from the aggregator, audit form under the checklist
         self.assertIn("Monthly audit — 20 minutes", rendered); self.assertIn("Read the headline", rendered)
         self.assertIn("Grade disagreements, not agreements", rendered)
@@ -290,6 +290,29 @@ class RulesTabTests(unittest.TestCase):
         bounds = [c for c in self.calls if c[0] == "POST" and c[1].endswith("/effect")][-1]
         self.assertEqual(bounds[2], {"effect": {"max_score": 39}})
         self.assertTrue(any("score ceiling 39" in s.value for s in app.success))
+
+    def test_signature_only_updates_approve_in_bulk_and_waiting_drafts_collapse(self):
+        def revision(draft_id, rule_id, text, effect=None):
+            return {"id": draft_id, "created_at": "2026-09-25T14:00:00Z", "run_id": "owner-revision", "text": text, "raw_text": text,
+                    "target_rule_id": rule_id, "status": "pending", "refine_status": "proposed", "refine_round": 1, "signature": {},
+                    "source_feedback_ids": [], "owner_feedback": [{"at": "x", "round": 0, "text": "Signature pass"}],
+                    "proposal": {"text": "  " + text + " ", "signature": {"keywords": ["unveil", "drone"]}, "effect": effect,
+                                 "rationale": "Kept the text; added title keywords.", "overlaps": [], "conflicts": [], "supersedes": rule_id}}
+        waiting = [{**REFINE_DRAFTS[1], "id": 30 + i} for i in range(4)]
+        self.drafts = [revision(21, "R-0034", "A new drone unveiling is not a digest item."),
+                       revision(22, "R-0012", "Robotaxi launches are digest items."),
+                       revision(23, "R-0028", "Loitering munitions are tier 2.", effect={"min_score": 70}), *waiting]
+        app = self.start()
+        self.assertIn("Signature-only updates · 2", "\n".join(e.label for e in app.expander))
+        self.assertIn("Waiting for ChatGPT's rewrite · 4", "\n".join(e.label for e in app.expander))
+        self.assertTrue(any(f.proto.form.form_id == "proposal_23" for f in app.get("form")), "a rewrite with score bounds gets its own card")
+        self.assertFalse(any(f.proto.form.form_id == "proposal_21" for f in app.get("form")), "signature-only drafts are listed compactly")
+        app.button("approve_signature_only").click().run()
+        self.assertEqual(list(app.exception), [])
+        approvals = [c for c in self.calls if c[0] == "POST" and c[1].endswith("/approve")]
+        self.assertEqual([c[1].split("/")[-2] for c in approvals], ["21", "22"])
+        self.assertTrue(all(c[2] == {} for c in approvals), "an empty body signs off the proposal as written")
+        self.assertTrue(any("Approved 2 signature updates" in s.value for s in app.success))
 
     def test_audit_form_posts_summary_and_focus(self):
         app = self.start()
