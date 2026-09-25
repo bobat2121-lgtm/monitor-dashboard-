@@ -133,7 +133,12 @@ def context_table(options: list[dict], context: Mapping[str, Any]) -> str:
 
 def grade_widgets(key: str, options: list[dict], vocab: Mapping[str, Any]) -> None:
     """Widgets for one grade. Values are read back from session_state on submit."""
-    st.selectbox("Item", options, format_func=lambda o: o["label"], key=f"gitem_{key}")
+    # The selectbox holds event ids, not the option dicts: plain values survive
+    # every Streamlit version's widget state, and an unknown value formats as
+    # itself (the 1.37 test harness passes labels back through format_func).
+    by_id = {o["event_id"]: o for o in options}
+    st.session_state[f"gitem_options_{key}"] = by_id
+    st.selectbox("Item", list(by_id), format_func=lambda eid: by_id[eid]["label"] if eid in by_id else str(eid), key=f"gitem_{key}")
     st.slider(
         "Score", 0, 100, DEFAULT_SCORE, key=f"gscore_{key}",
         help=scale_caption(vocab.get("scale")),
@@ -152,8 +157,17 @@ def grade_widgets(key: str, options: list[dict], vocab: Mapping[str, Any]) -> No
     )
 
 
+def selected_option(key: str) -> dict:
+    selected = st.session_state.get(f"gitem_{key}")
+    by_id = st.session_state.get(f"gitem_options_{key}") or {}
+    try:
+        return by_id.get(int(selected)) or {}
+    except (TypeError, ValueError):
+        return {}
+
+
 def read_grade(key: str, vocab: Mapping[str, Any]) -> dict:
-    option = st.session_state.get(f"gitem_{key}") or {}
+    option = selected_option(key)
     score = int(st.session_state.get(f"gscore_{key}", DEFAULT_SCORE))
     action = st.session_state.get(f"gaction_{key}", AUTO_ACTION)
     return {

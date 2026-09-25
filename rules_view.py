@@ -298,14 +298,77 @@ def render_drafts(base, pin, drafts):
     proposed = [d for d in drafts if d.get("refine_status") == "proposed"]
     queued = [d for d in drafts if d.get("refine_status") == "queued"]
     plain = [d for d in drafts if d.get("refine_status") not in ("proposed", "queued")]
+    signature_only = [d for d in proposed if is_signature_only(d)]
     if proposed or queued:
         st.caption(f"{len(proposed)} ready to sign off · {len(queued)} waiting for ChatGPT's rewrite")
+    if signature_only:
+        render_signature_only(base, pin, signature_only)
     for draft in proposed:
-        render_proposal(base, pin, draft)
+        if draft not in signature_only:
+            render_proposal(base, pin, draft)
     for draft in plain:
         render_plain_draft(base, pin, draft)
-    for draft in queued:
-        render_queued(base, pin, draft)
+    if len(queued) > 3:
+        with st.expander(f"Waiting for ChatGPT's rewrite · {len(queued)}"):
+            for draft in queued:
+                render_queued(base, pin, draft)
+    else:
+        for draft in queued:
+            render_queued(base, pin, draft)
+
+
+def normalized(text) -> str:
+    return " ".join(str(text or "").split())
+
+
+def is_signature_only(draft) -> bool:
+    """A revision whose rewrite keeps the rule's text and sets no score bounds:
+    approving it only changes when the rule applies, not what it says."""
+    proposal = draft.get("proposal") or {}
+    return bool(draft.get("target_rule_id")) and normalized(proposal.get("text")) == normalized(draft.get("raw_text")) \
+        and not proposal.get("effect")
+
+
+def render_signature_only(base, pin, drafts):
+    """Signature passes arrive in bulk; list them compactly with one approval."""
+    with st.expander(f"Signature-only updates · {len(drafts)} (text unchanged, no score bounds)", expanded=True):
+        st.markdown(
+            '<div class="rules-list">' + "".join(
+                '<div class="rule-row">'
+                f'<div class="rule-head"><span class="rule-id">{html.escape(str(d.get("target_rule_id")))}</span>'
+                f'<span class="rule-meta">draft #{d.get("id")}</span></div>'
+                f'<div class="rule-meta">{html.escape(signature_text((d.get("proposal") or {}).get("signature")))}</div>'
+                + (f'<div class="refine-note">{html.escape(str(d["proposal"]["rationale"]))}</div>' if (d.get("proposal") or {}).get("rationale") else "")
+                + "</div>"
+                for d in drafts
+            ) + "</div>",
+            unsafe_allow_html=True,
+        )
+        st.caption("Approving sets each rule's signature in place; the rule text and its score bounds stay as they are. "
+                   "To edit, send back or reject one, pick it below.")
+        if st.button(f"Approve all {len(drafts)} signature updates", type="primary", key="approve_signature_only"):
+            approved, errors = 0, []
+            for draft in drafts:
+                try:
+                    api(base, pin, f"/drafts/{draft['id']}/approve", {}, method="POST")
+                    approved += 1
+                except ValueError as exc:
+                    errors.append(f"#{draft['id']}: {exc}")
+            if errors:
+                st.error(f"{approved} approved; {len(errors)} failed: " + "; ".join(errors[:5]))
+            else:
+                flash(f"Approved {approved} signature updates · calibration and binding can now tell when those rules apply")
+        labels = {f"{d.get('target_rule_id')} · draft #{d.get('id')}": d for d in drafts}
+        pick = st.selectbox("Review one individually", ["—"] + list(labels), key="signature_only_pick")
+        if pick in labels:
+            render_proposal(base, pin, labels[pick])
+
+
+def flash(message: str) -> None:
+    """Show a success message after a full rerun, so every list on the tab
+    reflects the change that was just made."""
+    st.session_state["rules_flash"] = message
+    st.rerun()
 
 
 def _act(base, pin, path, payload, message):
@@ -314,8 +377,7 @@ def _act(base, pin, path, payload, message):
     except ValueError as exc:
         st.error(str(exc))
         return
-    st.success(message(result))
-    st.session_state["rules_dirty"] = True
+    flash(message(result))
 
 
 def render_signature_pass(base, pin, rules):
@@ -423,6 +485,9 @@ def render_rules_view(base):
     if not pin:
         st.markdown('<div class="empty-state">Open Owner mode and enter the grader PIN to manage rules.</div>', unsafe_allow_html=True)
         return
+    message = st.session_state.pop("rules_flash", None)
+    if message:
+        st.success(message)
     guides = fetch_guides(base)
     drafts_tab, calibration_tab, audit_tab, grade_tab = st.tabs(["Drafts and rules", "Calibration", "Monthly audit", "How to grade"])
 

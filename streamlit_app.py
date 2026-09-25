@@ -44,10 +44,13 @@ st.set_page_config(
 
 
 try:
-    SECRET_WORKER_URL = st.secrets.get("WORKER_URL")
+    # Check for a secrets file before touching st.secrets: older Streamlit
+    # (1.37) draws an error box on the page when none exists instead of only
+    # raising. Local development falls back to the environment or the default.
+    from streamlit.runtime.secrets import secrets_singleton
+
+    SECRET_WORKER_URL = st.secrets.get("WORKER_URL") if secrets_singleton.load_if_toml_exists() else None
 except Exception:
-    # Streamlit raises when no secrets file exists; local development should
-    # still work with the public default or an ordinary environment variable.
     SECRET_WORKER_URL = None
 
 WORKER_URL = str(
