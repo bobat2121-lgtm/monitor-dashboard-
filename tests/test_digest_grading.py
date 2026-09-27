@@ -11,7 +11,7 @@ APP_PATH = Path(__file__).resolve().parents[1] / "streamlit_app.py"
 
 VOCABULARY = {
     "ok": True,
-    "reason_codes": ["material", "below_materiality", "stale", "wrong_tier", "wrong_action"],
+    "reason_codes": ["material", "below_materiality", "stale", "wrong_tier", "wrong_action", "not_my_focus"],
     "actions": ["lead", "digest", "borderline", "reject", "urgent"],
     "scale": [
         {"action": "lead", "min": 90, "max": 100, "label": "Lead item"},
@@ -148,7 +148,7 @@ class DigestGradingTests(unittest.TestCase):
     def test_owner_toggle_places_the_grade_form_inside_each_digest_panel(self):
         app = self.start_app()
         self.assertEqual(self.forms(app), {})
-        self.assertFalse(any(slider.key.startswith("gscore_daily_") for slider in app.slider))
+        self.assertFalse(any(n.key.startswith("gscore_daily_") for n in app.number_input))
 
         app.checkbox("grading_enabled").check().run()
         self.assertEqual(list(app.exception), [])
@@ -163,9 +163,12 @@ class DigestGradingTests(unittest.TestCase):
             # Grader context is shown for the gradable items, and the legacy rank is called out.
             self.assertIn("Grader: reject · score 40 · below_materiality", rendered)
             self.assertIn("Not gradable with the new form", "\n".join(c.value for c in form.caption))
-            self.assertEqual([s.key for s in form.selectbox], [f"gitem_daily_{post_id}", f"gaction_daily_{post_id}", f"greason_daily_{post_id}"])
-            self.assertEqual([s.key for s in form.slider], [f"gscore_daily_{post_id}"])
-            self.assertEqual([r.key for r in form.radio], [f"gscope_daily_{post_id}"])
+            self.assertEqual([s.key for s in form.selectbox], [f"gitem_daily_{post_id}", f"greason_daily_{post_id}"])
+            self.assertEqual([n.key for n in form.number_input], [f"gscore_daily_{post_id}"])
+            self.assertEqual([r.key for r in form.radio], [f"ggrade_daily_{post_id}", f"gscope_daily_{post_id}"])
+            self.assertEqual(list(form.radio[0].options), ["Lead", "Digest", "Borderline", "Reject"])
+            self.assertEqual(list(form.radio[1].options), ["Just a grade", "Item", "Rule"])
+            self.assertEqual(form.selectbox[1].options[:2], ["— no reason", "not my focus"])
             self.assertEqual([note.key for note in form.text_area], [f"note_daily_{post_id}"])
             self.assertEqual([button.label for button in form.button], ["Submit grade"])
             # Only the two items with event ids are offered.
@@ -195,10 +198,10 @@ class DigestGradingTests(unittest.TestCase):
     def test_feed_grade_posts_one_self_contained_row_with_client_resolved_event_id(self):
         app = self.start_app(owner=True, pin="test-pin")
         app.selectbox("gitem_daily_102").select_index(1)
-        app.slider("gscore_daily_102").set_value(92)
-        app.selectbox("greason_daily_102").select("wrong_tier")
+        app.radio("ggrade_daily_102").set_value("Lead")
+        app.selectbox("greason_daily_102").set_value("wrong_tier")
         app.text_area("note_daily_102").set_value("  Should have led  ")
-        app.slider("gscore_daily_101").set_value(12)
+        app.number_input("gscore_daily_101").set_value(12)
         self.submit(app, "grade_daily_102")
 
         self.post.assert_called_once()
@@ -208,29 +211,39 @@ class DigestGradingTests(unittest.TestCase):
             self.post.call_args.kwargs["json"],
             {
                 "post_type": "daily", "post_id": 102, "item_rank": 4, "event_id": 1024,
-                "target_score": 92, "target_action": None, "reason_code": "wrong_tier",
+                "target_score": 92, "target_action": "lead", "reason_code": "wrong_tier",
                 "scope": "item", "note": "Should have led",
             },
         )
         self.assertEqual(len(self.forms(app)["grade_daily_102"].success), 1)
         # The other edition's draft is untouched.
-        self.assertEqual(app.slider("gscore_daily_101").value, 12)
+        self.assertEqual(app.number_input("gscore_daily_101").value, 12)
 
-    def test_action_override_and_rule_scope(self):
+    def test_presets_exact_score_and_rule_or_item_rulings(self):
         app = self.start_app(owner=True, pin="test-pin")
-        app.selectbox("gaction_daily_101").select("urgent")
-        app.radio("gscope_daily_101").set_value("rule")
+        # A ruling saved as a Rule or an Item needs the words.
+        app.radio("gscope_daily_101").set_value("Rule")
         self.submit(app, "grade_daily_101")
         self.post.assert_not_called()
         self.assertEqual(len(self.forms(app)["grade_daily_101"].info), 1)
 
+        app.radio("ggrade_daily_101").set_value("Reject")
         app.text_area("note_daily_101").set_value("Every covered-company procurement award is a digest item at any size.")
         self.submit(app, "grade_daily_101")
         self.post.assert_called_once()
         payload = self.post.call_args.kwargs["json"]
-        self.assertEqual(payload["target_action"], "urgent")
+        self.assertEqual((payload["target_score"], payload["target_action"], payload["reason_code"]), (20, "reject", None))
         self.assertEqual(payload["scope"], "rule")
         self.assertEqual(payload["event_id"], 1011)
+
+        # An exact score overrides the preset and lets its band decide; Item -> scope case.
+        self.post.reset_mock()
+        app.number_input("gscore_daily_101").set_value(64)
+        app.radio("gscope_daily_101").set_value("Item")
+        app.selectbox("greason_daily_101").set_value("not_my_focus")
+        self.submit(app, "grade_daily_101")
+        payload = self.post.call_args.kwargs["json"]
+        self.assertEqual((payload["target_score"], payload["target_action"], payload["reason_code"], payload["scope"]), (64, None, "not_my_focus", "case"))
 
     def test_missing_pin_keeps_submission_local_to_digest(self):
         app = self.start_app(owner=True)
@@ -260,8 +273,8 @@ class DigestGradingTests(unittest.TestCase):
         self.assertIn([14683, 14667], self.context_requests)
 
         app.selectbox(key).select_index(1)
-        app.slider(f"gscore_{suffix}").set_value(35)
-        app.selectbox(f"greason_{suffix}").select("stale")
+        app.number_input(f"gscore_{suffix}").set_value(35)
+        app.selectbox(f"greason_{suffix}").set_value("stale")
         self.submit(app, form_id, "rejected_grading_")
         self.post.assert_called_once()
         self.assertTrue(self.post.call_args.args[0].endswith("/grades"))

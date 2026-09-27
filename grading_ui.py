@@ -28,10 +28,17 @@ REASON_CODES = [
     "material", "rubric_priority", "primary_source", "new_information", "direct_company_signal",
     "sovereign_budget", "duplicate_coverage", "below_materiality", "low_confidence", "stale",
     "out_of_scope", "insufficient_evidence", "already_covered", "superseded", "source_quality", "roundup_member",
-    "wrong_tier", "missed_ticker_link", "duplicate_handling", "wrong_action",
+    "wrong_tier", "missed_ticker_link", "duplicate_handling", "wrong_action", "not_my_focus",
 ]
-AUTO_ACTION = "auto (from score)"
-DEFAULT_SCORE = 70
+# The one-tap grade: four presets and the score each stands for (the middle of
+# its band). An exact score, when given, overrides the preset.
+PRESETS = {"Lead": ("lead", 92), "Digest": ("digest", 78), "Borderline": ("borderline", 55), "Reject": ("reject", 20)}
+DEFAULT_PRESET = "Digest"
+NO_REASON = "— no reason"
+# The reasons an owner reaches for first; the rest follow alphabetically.
+FIRST_REASONS = ["not_my_focus", "wrong_tier", "wrong_action", "below_materiality", "duplicate_handling", "missed_ticker_link", "stale"]
+SAVE_AS = {"Just a grade": "item", "Item": "case", "Rule": "rule"}
+DEFAULT_SCORE = 78
 
 
 def action_for_score(score: int, scale=None) -> str:
@@ -131,6 +138,16 @@ def context_table(options: list[dict], context: Mapping[str, Any]) -> str:
     return "<div class='grade-context'>" + "".join(rows) + "</div>" if rows else ""
 
 
+def reason_options(vocab: Mapping[str, Any]) -> list[str]:
+    codes = list(vocab.get("reason_codes") or REASON_CODES)
+    first = [c for c in FIRST_REASONS if c in codes]
+    return [NO_REASON] + first + sorted(c for c in codes if c not in first)
+
+
+def reason_label(code: str) -> str:
+    return code if code == NO_REASON else code.replace("_", " ")
+
+
 def grade_widgets(key: str, options: list[dict], vocab: Mapping[str, Any]) -> None:
     """Widgets for one grade. Values are read back from session_state on submit."""
     # The selectbox holds event ids, not the option dicts: plain values survive
@@ -139,21 +156,21 @@ def grade_widgets(key: str, options: list[dict], vocab: Mapping[str, Any]) -> No
     by_id = {o["event_id"]: o for o in options}
     st.session_state[f"gitem_options_{key}"] = by_id
     st.selectbox("Item", list(by_id), format_func=lambda eid: by_id[eid]["label"] if eid in by_id else str(eid), key=f"gitem_{key}")
-    st.slider(
-        "Score", 0, 100, DEFAULT_SCORE, key=f"gscore_{key}",
-        help=scale_caption(vocab.get("scale")),
-    )
-    st.caption(scale_caption(vocab.get("scale")))
-    st.selectbox("Action", [AUTO_ACTION] + list(vocab.get("actions") or ACTIONS), key=f"gaction_{key}")
-    st.selectbox("Reason code", list(vocab.get("reason_codes") or REASON_CODES), key=f"greason_{key}")
-    st.radio(
-        "Scope", ["item", "rule"], horizontal=True, key=f"gscope_{key}",
-        help="item: this event only. rule: a principle you would apply unseen. Write it however it comes out; "
-             "ChatGPT rewrites it as a universal rule and you sign it off on the Rules tab.",
-    )
+    st.radio("Grade", list(PRESETS), index=list(PRESETS).index(DEFAULT_PRESET), horizontal=True, key=f"ggrade_{key}",
+             help=scale_caption(vocab.get("scale")))
+    exact, reason = st.columns([1, 2])
+    exact.number_input("Exact score (optional)", min_value=0, max_value=100, step=1, value=None, key=f"gscore_{key}",
+                       help=scale_caption(vocab.get("scale")))
+    reason.selectbox("Why (optional)", reason_options(vocab), format_func=reason_label, key=f"greason_{key}",
+                     help="not my focus: important to the industry, not to you. The grader and calibration learn the difference.")
     st.text_area(
-        "Note (optional for an item, required for a rule)", key=f"note_{key}", height=80,
-        placeholder="State the principle, then the instance. Name the boundary. For a rule, your own words are fine.",
+        "Your ruling (optional)", key=f"note_{key}", height=80,
+        placeholder="Say what the grader should learn from this, in your own words.",
+    )
+    st.radio(
+        "Save as", list(SAVE_AS), horizontal=True, key=f"gscope_{key}",
+        help="Just a grade: teaches the grader and calibration. Item: a worked example the grader follows for similar stories "
+             "(guides, never binds). Rule: a standing principle. ChatGPT drafts Items and Rules; you sign them off in Rules → Drafts.",
     )
 
 
@@ -168,15 +185,19 @@ def selected_option(key: str) -> dict:
 
 def read_grade(key: str, vocab: Mapping[str, Any]) -> dict:
     option = selected_option(key)
-    score = int(st.session_state.get(f"gscore_{key}", DEFAULT_SCORE))
-    action = st.session_state.get(f"gaction_{key}", AUTO_ACTION)
+    preset_action, preset_score = PRESETS.get(st.session_state.get(f"ggrade_{key}") or DEFAULT_PRESET, PRESETS[DEFAULT_PRESET])
+    exact = st.session_state.get(f"gscore_{key}")
+    # An exact score overrides the preset; its band then decides the action.
+    score = int(exact) if exact is not None else preset_score
+    action = None if exact is not None else preset_action
+    reason = st.session_state.get(f"greason_{key}")
     return {
         "option": option,
         "target_score": score,
-        "target_action": None if action == AUTO_ACTION else action,
+        "target_action": action,
         "derived_action": action_for_score(score, vocab.get("scale")),
-        "reason_code": st.session_state.get(f"greason_{key}"),
-        "scope": st.session_state.get(f"gscope_{key}", "item"),
+        "reason_code": None if reason in (None, NO_REASON) else reason,
+        "scope": SAVE_AS.get(st.session_state.get(f"gscope_{key}") or "Just a grade", "item"),
         "note": str(st.session_state.get(f"note_{key}", "")).strip(),
     }
 
@@ -193,7 +214,8 @@ def handle_response(response) -> None:
     if response.status_code == 200:
         grade = body.get("grade") or {}
         draft = body.get("rule_draft_id")
-        suffix = f" · draft rule #{draft} queued for ChatGPT's rewrite; sign it off on the Rules tab" if draft else ""
+        noun = "Item" if body.get("draft_kind") == "item" else "Rule"
+        suffix = f" · {noun} draft #{draft} sent to ChatGPT; it comes back to Rules → Drafts" if draft else ""
         st.success(f"Stored grade #{body.get('id')} · {grade.get('target_score')} {grade.get('target_action')}{suffix}")
     elif response.status_code == 403:
         st.error("Bad PIN.")
@@ -219,8 +241,9 @@ def submit(base: str, post_type: str, post_id: int, key: str, vocab: Mapping[str
     if not option:
         st.info("Choose an item to grade.")
         return False
-    if values["scope"] == "rule" and len(values["note"]) < 20:
-        st.info("A rule grade needs a note of at least 20 characters stating the principle.")
+    if values["scope"] in ("rule", "case") and len(values["note"]) < 20:
+        noun = "an Item" if values["scope"] == "case" else "a Rule"
+        st.info(f"To save {noun}, write your ruling (at least 20 characters). Or save it as just a grade.")
         return False
     payload = {
         "post_type": post_type,
