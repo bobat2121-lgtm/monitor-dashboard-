@@ -149,7 +149,7 @@ def render_items(items) -> str:
             metadata.append(f'<span class="feed-worker">{html.escape(worker.replace("-", " ").title())}</span>')
         meta_html = '<span>·</span>'.join(metadata)
 
-        badge = f'<span class="value-badge level-{level}">{level}</span>' if level else ""
+        badge = f'<span class="value-badge level-{level}">{level.capitalize()}</span>' if level else ""
         headline_html = (
             f'<div class="feed-item-headline">{html.escape(item_headline)}</div>'
             if item_headline
@@ -199,8 +199,32 @@ def edition_header(post, latest=False) -> str:
         f'<span>·</span><span>{item_count} item{"s" if item_count != 1 else ""}</span>'
         "</div>"
         f"{headline_html}"
+        f"{edition_brief(post.get('brief'))}"
         "</div>"
     )
+
+
+def edition_brief(brief) -> str:
+    """The banner below the headline: what unfolded across the edition, and
+    the threads that tie items together (the Worker composes one when the
+    reviewer's is missing)."""
+    if not isinstance(brief, dict):
+        return ""
+    dek = str(brief.get("dek") or "").strip()
+    threads = []
+    for thread in brief.get("threads") or []:
+        if not isinstance(thread, dict):
+            continue
+        label = str(thread.get("label") or "").strip()
+        ranks = [str(r).zfill(2) for r in thread.get("ranks") or [] if isinstance(r, int)]
+        if label and ranks:
+            threads.append(
+                f'<span class="edition-thread">{html.escape(label)}'
+                f'<span class="thread-ranks">{" ".join(ranks)}</span></span>'
+            )
+    dek_html = f'<div class="edition-dek">{html.escape(dek)}</div>' if dek else ""
+    threads_html = f'<div class="edition-threads">{"".join(threads)}</div>' if threads else ""
+    return dek_html + threads_html
 
 
 def daily_edition(post, latest=False, grading=False) -> str:
@@ -401,7 +425,9 @@ def search_editions(daily, query):
                 ("headline", "text", "worker", "url", "value")).casefold() for term in terms)
         ]
         if items:
-            matches.append({**post, "items": items})
+            # A search shows only the matching items, so the edition brief (whose
+            # threads cite the full edition) is left out.
+            matches.append({**post, "items": items, "brief": None})
     return matches
 
 
