@@ -6,7 +6,9 @@ import streamlit as st
 from streamlit.testing.v1 import AppTest
 
 from calibration_view import delta_text, pct
-from rules_view import draft_origin, effect_payload, effect_text, parse_signature, signature_value, sort_rules
+from datetime import datetime, timezone
+
+from rules_view import classify, draft_origin, effect_payload, effect_text, next_pickup_label, parse_signature, signature_value, sort_rules
 
 
 APP_PATH = Path(__file__).resolve().parents[1] / "streamlit_app.py"
@@ -67,6 +69,30 @@ DRILL = {"ok": True, "grades": [{"id": 73, "event_id": 14683, "title": "Waymo no
 GUIDES = {"ok": True, "guides": {"monthly_audit": {"path": "docs/monthly-audit.md", "text": "# Monthly audit — 20 minutes\n\n1. Read the headline."}, "how_to_grade": {"path": "docs/how-to-grade.md", "text": "# How to grade\n\nGrade disagreements, not agreements."}}}
 
 
+ITEMS = [
+    {"id": 40, "rule_id": "I-0001", "kind": "case", "type": "item", "active": 1, "event_id": 900,
+     "text": "Newport Beach expanded its Skydio and Axon police-drone program; the owner graded it borderline. Routine municipal renewals stay borderline.",
+     "signature": {"workers": ["axon-signal-watcher"], "tickers": ["AXON"], "keywords": ["police", "renew"]}, "created_at": "2026-09-27T18:00:00Z", "state": None},
+]
+TRENDS = {"ok": True, "config": {"min_grades": 5, "min_share": 0.75, "window_days": 30}, "trends": [
+    {"key": "worker:axon-signal-watcher", "status": "ready", "n": 6, "needed": 5, "comparable": 7, "share": 0.857,
+     "summary": "You graded 6 of 7 axon signal watcher items lower than the grader in the last 30 days"},
+    {"key": "reason:not_my_focus", "status": "watching", "n": 3, "needed": 5, "comparable": 4, "share": 0.75,
+     "summary": "You graded 3 of 4 not my focus items lower than the grader in the last 30 days"},
+    {"key": "ticker:AXON", "status": "covered", "n": 6, "needed": 5, "comparable": 7, "share": 0.857, "covered_by": "R-0009",
+     "summary": "You graded 6 of 7 AXON items lower than the grader in the last 30 days"},
+]}
+
+
+def proposed(draft_id, text, proposal_text, feedback=(), status="proposed", target=None, run_id="owner", kind="rule", effect=None):
+    return {"id": draft_id, "created_at": "2026-09-27T12:00:00Z", "run_id": run_id, "text": text, "raw_text": text, "status": "pending",
+            "refine_status": status, "refine_round": 1 if status == "proposed" or feedback else 0, "signature": {}, "source_feedback_ids": [],
+            "owner_feedback": list(feedback), "owner_edit": next((f.get("edit") for f in reversed(list(feedback)) if f.get("edit")), None),
+            "target_rule_id": target, "kind": kind,
+            "proposal": None if proposal_text is None else {"text": proposal_text, "signature": {"keywords": ["counter-uas"]}, "effect": effect,
+                                                              "rationale": "Kept the $1M threshold.", "overlaps": [], "conflicts": [], "supersedes": target}}
+
+
 class RulesTabTests(unittest.TestCase):
     def setUp(self):
         st.cache_data.clear()
@@ -74,6 +100,9 @@ class RulesTabTests(unittest.TestCase):
         self.calls = []
         self.guides = GUIDES
         self.drafts = DRAFTS
+        self.recent = []
+        self.items = ITEMS
+        self.trends = TRENDS
         get_patch = patch("requests.get", side_effect=self.fake_get)
         get_patch.start(); self.addCleanup(get_patch.stop)
         post_patch = patch("requests.post", side_effect=self.fake_post)
@@ -87,10 +116,17 @@ class RulesTabTests(unittest.TestCase):
             return StubResponse({"daily": [], "weekly": []})
         if url.endswith("/grades/guide"):
             return StubResponse(self.guides, 200 if self.guides else 503)
+        if "/rules/drafts" in url and "status=recent" in url:
+            return StubResponse({"ok": True, "drafts": self.recent})
         if "/rules/drafts" in url:
             return StubResponse({"ok": True, "drafts": self.drafts})
+        if "/rules/items" in url:
+            items = self.items if "include=inactive" in url else [i for i in self.items if i.get("active")]
+            return StubResponse({"ok": True, "items": items})
         if "/rules" in url:
-            return StubResponse({"ok": True, "rules": RULES, "pending_drafts": 1})
+            return StubResponse({"ok": True, "rules": RULES + ([{**RULES[0], "id": 9, "rule_id": "R-0009", "active": 0, "superseded_by": None, "text": "Old retired rule."}] if "include=inactive" in url else []), "pending_drafts": 1})
+        if "/calibration/trends" in url:
+            return StubResponse(self.trends)
         if "/calibration/summary" in url:
             return StubResponse(SUMMARY)
         if "/calibration/month" in url:
@@ -100,24 +136,26 @@ class RulesTabTests(unittest.TestCase):
         raise AssertionError(f"unexpected request: {url}")
 
     def fake_post(self, url, **kwargs):
-        self.calls.append(("POST", url, kwargs.get("json")))
+        body = kwargs.get("json") or {}
+        self.calls.append(("POST", url, body))
         if url.endswith("/approve"):
-            payload = kwargs.get("json") or {}
-            return StubResponse({"ok": True, "rule_id": "R-0003", "distilled": 1, "precedent_id": 9, "superseded": payload.get("supersedes")})
+            return StubResponse({"ok": True, "kind": "rule", "rule_id": "R-0003", "distilled": 1, "precedent_id": 9, "superseded": body.get("supersedes")})
         if url.endswith("/rules/drafts"):
-            return StubResponse({"ok": True, "draft_id": 12, "duplicate": False, "refine_status": "queued"})
+            return StubResponse({"ok": True, "draft_id": 12, "kind": body.get("kind"), "duplicate": False, "refine_status": "queued"})
         if url.endswith("/rules/refine-missing"):
             return StubResponse({"ok": True, "queued": 1, "remaining": 0})
-        if url.endswith("/refine") and "/rules/drafts/" not in url:
+        if url.endswith("/refine") and "/rules/drafts/" in url:
+            return StubResponse({"ok": True, "draft_id": int(url.split("/")[-2]), "refine_status": "queued", "edit": "text" in body})
+        if url.endswith("/refine"):
             return StubResponse({"ok": True, "rule_id": url.split("/")[-2], "draft_id": 13, "refine_status": "queued"})
-        if url.endswith("/effect"):
-            return StubResponse({"ok": True, "rule_id": url.split("/")[-2], "effect": (kwargs.get("json") or {}).get("effect")})
-        if url.endswith("/supersede"):
-            return StubResponse({"ok": True, "superseded": "R-0001", "rule_id": "R-0004"})
-        if url.endswith("/fold"):
-            return StubResponse({"ok": True, "rule_id": "R-0001", "brief_version": "2026.10.1"})
+        if url.endswith("/undo"):
+            return StubResponse({"ok": True, "draft_id": int(url.split("/")[-2]), "restored": "superseded", "status": "pending"})
         if url.endswith("/drop"):
             return StubResponse({"ok": True, "draft_id": int(url.split("/")[-2]), "dropped": "R-0034", "status": "approved"})
+        if url.endswith("/deactivate") or url.endswith("/reactivate"):
+            return StubResponse({"ok": True, "rule_id": url.split("/")[-2], "active": 1 if url.endswith("/reactivate") else 0})
+        if url.endswith("/calibration/trends/draft"):
+            return StubResponse({"ok": True, "key": body.get("key"), "draft_id": 55, "created": True})
         if url.endswith("/calibration/audit"):
             return StubResponse({"ok": True, "id": 1, "month": "2026-09", "standing_instruction_id": 23})
         return StubResponse({"ok": True})
@@ -133,10 +171,32 @@ class RulesTabTests(unittest.TestCase):
     def rendered(self, app):
         return "\n".join(m.value for m in app.markdown)
 
+    def posts(self):
+        return [c for c in self.calls if c[0] == "POST"]
+
     def test_helpers(self):
         self.assertEqual(parse_signature("workers: a, b; tickers: X; bogus: y"), {"workers": ["a", "b"], "tickers": ["X"]})
         self.assertEqual([r["rule_id"] for r in sort_rules(RULES)], ["R-0002", "R-0001", "R-scale-v1"])
         self.assertEqual(pct(0.667), "67%"); self.assertEqual(delta_text(0.167), "+17 pts vs prior month")
+        self.assertEqual(signature_value({"workers": ["a", "b"], "tickers": [], "keywords": ["k"]}), "workers: a, b; keywords: k")
+        self.assertEqual(effect_payload(70, None), {"min_score": 70})
+        self.assertEqual(effect_text({"min_score": 70, "max_score": 95}), "score floor 70 · score ceiling 95")
+        self.assertEqual(draft_origin({"run_id": "owner"}), "written here")
+        self.assertEqual(draft_origin({"run_id": None}), "from a grade")
+        self.assertEqual(draft_origin({"run_id": "calibration-trend", "source_feedback_ids": [1, 2, 3]}), "from calibration · 3 grades")
+        self.assertEqual(draft_origin({"run_id": "owner-revision", "target_rule_id": "R-0001"}), "revision of R-0001")
+        # 6:45 PM ET -> the 6:50 PM edition pickup; 10 PM ET -> tomorrow's first one.
+        self.assertEqual(next_pickup_label(datetime(2026, 9, 27, 22, 45, tzinfo=timezone.utc)), "~6:50 PM ET")
+        self.assertEqual(next_pickup_label(datetime(2026, 9, 28, 2, 0, tzinfo=timezone.utc)), "tomorrow ~6:50 AM ET")
+        groups = classify([
+            proposed(1, "a" * 30, "b" * 30),
+            proposed(2, "a" * 30, "b" * 30, feedback=[{"round": 1, "edit": "c" * 30}]),
+            proposed(3, "a" * 30, "b" * 30, feedback=[{"round": 1, "text": "tighter"}], status="queued"),
+            proposed(4, "a" * 30, None, status="queued"),
+            proposed(5, "x" * 30, "x" * 30, target="R-0001"),
+        ])
+        self.assertEqual({k: [d["id"] for d in v] for k, v in groups.items()},
+                         {"back": [2], "with_chatgpt": [3], "your_turn": [1], "signature_only": [5], "waiting": [4]})
 
     def test_navigation_has_no_separate_calibration_view(self):
         app = self.start()
@@ -148,200 +208,182 @@ class RulesTabTests(unittest.TestCase):
         self.assertIn("enter the grader PIN", self.rendered(app))
         self.assertFalse(any("/rules" in c[1] or "/calibration" in c[1] for c in self.calls))
 
-    def test_four_sections_render_with_the_pin_header(self):
+    def test_three_tabs_render_with_the_pin_header(self):
         app = self.start()
-        self.assertEqual([t.label for t in app.tabs], ["Drafts and rules", "Calibration", "Monthly audit", "How to grade"])
+        self.assertEqual([t.label for t in app.tabs], ["Drafts", "Rules & Items", "Calibration"])
         rendered = self.rendered(app)
-        # Drafts and rules
-        self.assertIn("Pending drafts · 1", rendered); self.assertIn("Active rules · 3", rendered)
-        self.assertIn(">ignored<", rendered); self.assertIn(">working<", rendered); self.assertIn(">no data yet<", rendered)
-        self.assertLess(rendered.index("R-0002"), rendered.index("R-0001"))
-        # Calibration
+        # Drafts: composer and the distilled draft as a card.
+        self.assertTrue(any(f.proto.form.form_id == "rule_composer" for f in app.get("form")))
+        self.assertEqual(app.text_area("card_text_7").value, DRAFTS[0]["text"])
+        # Rules & Items: one expander per rule and item.
+        labels = "\n".join(e.label for e in app.expander)
+        for rule_id in ("R-0002 · Rule · ignored", "R-0001 · Rule · working", "R-scale-v1 · Rule · no data yet", "I-0001 · Item · guides"):
+            self.assertIn(rule_id, labels)
+        self.assertLess(labels.index("R-0002"), labels.index("R-0001"))
+        # Calibration: trends first, then the scoreboard, audit and guide.
+        self.assertIn("You graded 6 of 7 axon signal watcher items lower", rendered)
+        self.assertNotIn("AXON items lower", rendered, "a covered trend is not shown")
         metric = next(m for m in app.metric if m.label == "Action agreement")
         self.assertEqual(metric.value, "67%"); self.assertEqual(metric.delta, "+17 pts vs prior month")
         self.assertEqual(len(app.get("plotly_chart")), 2)
-        self.assertTrue(any("Waymo now testing" in t.value.to_string() for t in [*app.get("table"), *app.get("arrow_table")]))
-        # Guides from the aggregator, audit form under the checklist
-        self.assertIn("Monthly audit — 20 minutes", rendered); self.assertIn("Read the headline", rendered)
-        self.assertIn("Grade disagreements, not agreements", rendered)
-        self.assertIn("Prior month audit · 2026-08", rendered)
+        self.assertIn("Monthly audit", labels); self.assertIn("How to grade", labels)
+        self.assertIn("Read the headline", rendered)
         self.assertTrue(any(f.proto.form.form_id == "audit_form" for f in app.get("form")))
         owner_calls = [c for c in self.calls if c[0] == "GET" and ("/rules" in c[1] or "/calibration" in c[1])]
         self.assertTrue(owner_calls and all(c[2] == {"X-Owner-Pin": "test-pin"} for c in owner_calls))
-        guide_calls = [c for c in self.calls if c[1].endswith("/grades/guide")]
-        self.assertEqual(len(guide_calls), 1, "guides fetched once and cached")
+        self.assertEqual(len([c for c in self.calls if c[1].endswith("/grades/guide")]), 1, "guides fetched once and cached")
 
     def test_guides_unavailable_shows_fallback_not_an_error(self):
         self.guides = {}
         app = self.start()
-        rendered = "\n".join(c.value for c in app.caption)
-        self.assertIn("Guide unavailable", rendered)
+        self.assertIn("Guide unavailable", "\n".join(c.value for c in app.caption))
         self.assertEqual(list(app.error), [])
 
-    def test_draft_approval_posts_the_edited_text(self):
+    def test_composer_sends_the_words_as_a_rule_or_an_item(self):
         app = self.start()
-        app.text_area("draft_text_7").set_value("Robotaxi new-market launches by Waymo, Tesla or Zoox are digest items; score 70 or more.")
-        form = next(f for f in app.get("form") if f.proto.form.form_id == "draft_7")
-        next(b for b in form.button if b.label == "Approve").click().run()
+        form = next(f for f in app.get("form") if f.proto.form.form_id == "rule_composer")
+        next(b for b in form.button if b.label == "Send to ChatGPT").click().run()
+        self.assertEqual(self.posts(), [], "empty words are not sent")
+        app.radio("composer_kind").set_value("Item")
+        app.text_area("composer_text").set_value(JUMBLE)
+        form = next(f for f in app.get("form") if f.proto.form.form_id == "rule_composer")
+        next(b for b in form.button if b.label == "Send to ChatGPT").click().run()
+        post = self.posts()[-1]
+        self.assertTrue(post[1].endswith("/rules/drafts"))
+        self.assertEqual(post[2], {"text": JUMBLE, "kind": "item"})
+        self.assertTrue(any("Item draft #12 sent to ChatGPT" in s.value for s in app.success))
+
+    def test_card_publishes_chatgpts_version_or_the_owners_edit(self):
+        self.drafts = [proposed(8, JUMBLE, REWRITE, target=None, effect={"min_score": 70})]
+        self.drafts[0]["proposal"]["supersedes"] = "R-0001"
+        app = self.start()
+        self.assertEqual(app.text_area("card_text_8").value, REWRITE)
+        self.assertIn("score floor 70", self.rendered(app))
+        self.assertIn("would replace R-0001", self.rendered(app))
+        app.button("publish_8").click().run()
         self.assertEqual(list(app.exception), [])
-        post = next(c for c in self.calls if c[0] == "POST")
-        self.assertTrue(post[1].endswith("/rules/drafts/7/approve"))
-        self.assertEqual(post[2]["signature"], {"workers": ["robotaxi-monitor"], "keywords": ["waymo"]})
-        self.assertIn("Zoox", post[2]["text"])
-        self.assertTrue(any("Approved as R-0003" in s.value for s in app.success))
+        self.assertEqual(self.posts()[-1][2], {"text": REWRITE}, "without details, the rewrite's signature and bounds stand")
+        self.assertTrue(any("Published rule R-0003" in s.value for s in app.success))
+        # Details: signature, bounds and the explicit choice to replace a rule.
+        app.toggle("card_details_8").set_value(True).run()
+        self.assertIn(JUMBLE, self.rendered(app))
+        self.assertEqual(app.number_input("card_8_floor").value, 70)
+        app.checkbox("card_replace_8").check()
+        app.text_area("card_text_8").set_value(REWRITE + " Not for loitering munitions.")
+        app.button("publish_8").click().run()
+        payload = self.posts()[-1][2]
+        self.assertEqual(payload["text"], REWRITE + " Not for loitering munitions.")
+        self.assertEqual(payload["signature"], {"keywords": ["counter-uas"]})
+        self.assertEqual(payload["effect"], {"min_score": 70})
+        self.assertEqual(payload["supersedes"], "R-0001")
 
-    def test_supersede_and_fold(self):
+    def test_send_back_carries_the_edit_and_the_card_stays_pinned(self):
+        self.drafts = [proposed(8, JUMBLE, REWRITE)]
         app = self.start()
-        form = next(f for f in app.get("form") if f.proto.form.form_id == "rule_action")
-        next(b for b in form.button if b.label == "Supersede").click().run()
-        self.assertFalse(any(c[0] == "POST" for c in self.calls))
-        app.text_area("rule_action_text").set_value("Freshness is judged by the underlying event date; 3+ week old events are excluded.")
-        form = next(f for f in app.get("form") if f.proto.form.form_id == "rule_action")
-        next(b for b in form.button if b.label == "Supersede").click().run()
-        self.assertTrue(next(c for c in self.calls if c[0] == "POST")[1].endswith("/rules/R-0001/supersede"))
-        app.text_input("rule_action_fold").set_value("2026.10.1")
-        form = next(f for f in app.get("form") if f.proto.form.form_id == "rule_action")
-        next(b for b in form.button if b.label == "Fold into brief").click().run()
-        fold = [c for c in self.calls if c[0] == "POST" and c[1].endswith("/fold")]
-        self.assertEqual(fold[0][2], {"brief_version": "2026.10.1"})
-        self.assertTrue(any("folded into 2026.10.1" in s.value for s in app.success))
+        app.button("sendback_8").click().run()
+        self.assertEqual(self.posts(), [], "nothing changed, nothing sent")
+        self.assertTrue(any("Edit the text or add a note" in i.value for i in app.info))
+        edited = REWRITE + " Only uncrewed maritime and air programs."
+        app.text_area("card_text_8").set_value(edited)
+        app.text_input("card_note_8").set_value("Keep my maritime/air boundary.")
+        app.button("sendback_8").click().run()
+        post = self.posts()[-1]
+        self.assertTrue(post[1].endswith("/rules/drafts/8/refine"))
+        self.assertEqual(post[2], {"text": edited, "feedback": "Keep my maritime/air boundary."})
+        self.assertTrue(any("sent back with your edit" in s.value for s in app.success))
 
-    def test_refinement_helpers(self):
-        self.assertEqual(signature_value({"workers": ["a", "b"], "tickers": [], "keywords": ["k"]}), "workers: a, b; keywords: k")
-        self.assertEqual(parse_signature(signature_value({"workers": ["a"], "keywords": ["x y"]})), {"workers": ["a"], "keywords": ["x y"]})
-        self.assertEqual(effect_payload(None, None), None)
-        self.assertEqual(effect_payload(70, None), {"min_score": 70})
-        self.assertEqual(effect_text({"min_score": 70, "max_score": 95}), "score floor 70 · score ceiling 95")
-        self.assertEqual(draft_origin({"run_id": "owner"}), "written on the Rules tab")
-        self.assertEqual(draft_origin({"run_id": None}), "rule-scoped grade")
-        self.assertEqual(draft_origin({"run_id": "owner-revision", "target_rule_id": "R-0001"}), "revision of R-0001")
-
-    def test_proposal_shows_both_versions_and_approves_the_rewrite(self):
-        self.drafts = REFINE_DRAFTS
+        # Now with ChatGPT: pinned above everything, showing what was sent.
+        sent = [{"round": 1, "text": "Keep my maritime/air boundary.", "edit": edited}]
+        self.drafts = [proposed(9, "other words for another rule here", "Another rewrite for the owner to sign off."),
+                       proposed(8, JUMBLE, REWRITE, feedback=sent, status="queued")]
         app = self.start()
         rendered = self.rendered(app)
-        self.assertIn("1 ready to sign off · 1 waiting for ChatGPT's rewrite", "\n".join(c.value for c in app.caption))
-        for text in ("Your words", JUMBLE, "ChatGPT's rule", REWRITE, "Generalized from the Navy", "would replace R-0001",
-                     "overlaps R-0002", "score floor 70", "waiting for ChatGPT's rewrite", "drone unveilings are noise"):
-            self.assertIn(text, rendered)
-        self.assertEqual(app.text_area("proposal_text_8").value, REWRITE)
-        self.assertEqual(app.number_input("proposal_8_floor").value, 70)
-        form = next(f for f in app.get("form") if f.proto.form.form_id == "proposal_8")
-        next(b for b in form.button if b.label == "Approve").click().run()
-        self.assertEqual(list(app.exception), [])
-        post = next(c for c in self.calls if c[0] == "POST")
-        self.assertTrue(post[1].endswith("/rules/drafts/8/approve"))
-        self.assertEqual(post[2], {"text": REWRITE, "signature": {"keywords": ["marketplace", "qualification"]}, "effect": {"min_score": 70}})
-        self.assertTrue(any("Approved as R-0003" in s.value for s in app.success))
+        self.assertLess(rendered.index("With ChatGPT · 1"), rendered.index("Your turn · 1"))
+        self.assertIn("You sent: " + edited, rendered)
+        app.button("withdraw_8").click().run()
+        self.assertTrue(self.posts()[-1][1].endswith("/rules/drafts/8/reject"))
 
-        # Replacing the rule the rewrite names is an explicit choice.
-        app.checkbox("proposal_replace_8").check()
-        form = next(f for f in app.get("form") if f.proto.form.form_id == "proposal_8")
-        next(b for b in form.button if b.label == "Approve").click().run()
-        approve = [c for c in self.calls if c[0] == "POST" and c[1].endswith("/8/approve")][-1]
-        self.assertEqual(approve[2]["supersedes"], "R-0001")
-        self.assertTrue(any("replaces R-0001" in s.value for s in app.success))
-
-    def test_send_back_needs_a_note_and_posts_it(self):
-        self.drafts = REFINE_DRAFTS
+        # Back from ChatGPT: first on the page, marked, and editable again.
+        self.drafts = [proposed(9, "other words for another rule here", "Another rewrite for the owner to sign off."),
+                       proposed(8, JUMBLE, REWRITE + " Only uncrewed maritime and air programs.", feedback=sent)]
         app = self.start()
-        form = next(f for f in app.get("form") if f.proto.form.form_id == "proposal_8")
-        next(b for b in form.button if b.label == "Send back to ChatGPT").click().run()
-        self.assertFalse(any(c[0] == "POST" for c in self.calls))
-        app.text_input("proposal_note_8").set_value("Too broad: maritime and air programs only.")
-        form = next(f for f in app.get("form") if f.proto.form.form_id == "proposal_8")
-        next(b for b in form.button if b.label == "Send back to ChatGPT").click().run()
-        post = next(c for c in self.calls if c[0] == "POST")
-        self.assertTrue(post[1].endswith("/rules/drafts/8/refine"))
-        self.assertEqual(post[2], {"feedback": "Too broad: maritime and air programs only."})
+        rendered = self.rendered(app)
+        self.assertLess(rendered.index("Back from ChatGPT · 1"), rendered.index("Your turn · 1"))
+        self.assertIn("your edit applied", rendered)
 
-    def test_queued_draft_can_be_approved_as_written_or_withdrawn(self):
-        self.drafts = REFINE_DRAFTS
+    def test_signature_only_updates_publish_in_bulk_and_first_versions_wait(self):
+        revision = lambda i, rule: proposed(i, f"Rule text number {i} stays exactly the same.", f"Rule text number {i} stays exactly the same.", target=rule, run_id="owner-revision")
+        waiting = [proposed(30 + i, f"a waiting rule in the owner's words, number {i}", None, status="queued") for i in range(4)]
+        self.drafts = [revision(21, "R-0034"), revision(22, "R-0012"), proposed(23, "Loitering munitions are tier 2.", "Loitering munitions are tier 2 (70+).", target="R-0028", effect={"min_score": 70}), *waiting]
         app = self.start()
-        form = next(f for f in app.get("form") if f.proto.form.form_id == "queued_9")
-        next(b for b in form.button if b.label == "Withdraw").click().run()
-        self.assertTrue(next(c for c in self.calls if c[0] == "POST")[1].endswith("/rules/drafts/9/reject"))
-
-    def test_composer_sends_owner_words_with_the_item(self):
-        app = self.start()
-        form = next(f for f in app.get("form") if f.proto.form.form_id == "rule_composer")
-        next(b for b in form.button if b.label == "Send to ChatGPT for a rewrite").click().run()
-        self.assertFalse(any(c[0] == "POST" for c in self.calls), "empty text is not sent")
-        app.text_area("composer_text").set_value(JUMBLE)
-        app.number_input("composer_event").set_value(900)
-        form = next(f for f in app.get("form") if f.proto.form.form_id == "rule_composer")
-        next(b for b in form.button if b.label == "Send to ChatGPT for a rewrite").click().run()
-        post = next(c for c in self.calls if c[0] == "POST")
-        self.assertTrue(post[1].endswith("/rules/drafts"))
-        self.assertEqual(post[2], {"text": JUMBLE, "event_id": 900})
-        self.assertTrue(any("Draft #12 queued for ChatGPT" in s.value for s in app.success))
-
-    def test_signature_pass_revise_and_score_bounds(self):
-        app = self.start()
-        self.assertIn("1 active rule has no signature", "\n".join(c.value for c in app.caption))
-        app.button("rules_signature_pass").click().run()
-        self.assertTrue(any(c[0] == "POST" and c[1].endswith("/rules/refine-missing") for c in self.calls))
-        app.text_input("rule_action_revise").set_value("Add a boundary for reposts.")
-        form = next(f for f in app.get("form") if f.proto.form.form_id == "rule_action")
-        next(b for b in form.button if b.label == "Ask ChatGPT to revise").click().run()
-        revise = [c for c in self.calls if c[0] == "POST" and c[1].endswith("/refine")][-1]
-        self.assertTrue(revise[1].endswith("/rules/R-0001/refine")); self.assertEqual(revise[2], {"feedback": "Add a boundary for reposts."})
-        app.number_input("rule_action_ceiling").set_value(39)
-        form = next(f for f in app.get("form") if f.proto.form.form_id == "rule_action")
-        next(b for b in form.button if b.label == "Set score bounds").click().run()
-        bounds = [c for c in self.calls if c[0] == "POST" and c[1].endswith("/effect")][-1]
-        self.assertEqual(bounds[2], {"effect": {"max_score": 39}})
-        self.assertTrue(any("score ceiling 39" in s.value for s in app.success))
-
-    def test_signature_only_updates_approve_in_bulk_and_waiting_drafts_collapse(self):
-        def revision(draft_id, rule_id, text, effect=None):
-            return {"id": draft_id, "created_at": "2026-09-25T14:00:00Z", "run_id": "owner-revision", "text": text, "raw_text": text,
-                    "target_rule_id": rule_id, "status": "pending", "refine_status": "proposed", "refine_round": 1, "signature": {},
-                    "source_feedback_ids": [], "owner_feedback": [{"at": "x", "round": 0, "text": "Signature pass"}],
-                    "proposal": {"text": "  " + text + " ", "signature": {"keywords": ["unveil", "drone"]}, "effect": effect,
-                                 "rationale": "Kept the text; added title keywords.", "overlaps": [], "conflicts": [], "supersedes": rule_id}}
-        waiting = [{**REFINE_DRAFTS[1], "id": 30 + i} for i in range(4)]
-        self.drafts = [revision(21, "R-0034", "A new drone unveiling is not a digest item."),
-                       revision(22, "R-0012", "Robotaxi launches are digest items."),
-                       revision(23, "R-0028", "Loitering munitions are tier 2.", effect={"min_score": 70}), *waiting]
-        app = self.start()
-        self.assertIn("Signature-only updates · 2", "\n".join(e.label for e in app.expander))
-        self.assertIn("Waiting for ChatGPT's rewrite · 4", "\n".join(e.label for e in app.expander))
-        self.assertTrue(any(f.proto.form.form_id == "proposal_23" for f in app.get("form")), "a rewrite with score bounds gets its own card")
-        self.assertFalse(any(f.proto.form.form_id == "proposal_21" for f in app.get("form")), "signature-only drafts are listed compactly")
+        labels = "\n".join(e.label for e in app.expander)
+        self.assertIn("Signature-only updates · 2", labels)
+        self.assertIn("Waiting for ChatGPT's first version · 4", labels)
+        self.assertTrue(any(t.key == "card_text_23" for t in app.text_area), "a rewrite with score bounds gets its own card")
+        self.assertFalse(any(t.key == "card_text_21" for t in app.text_area), "signature-only drafts are listed compactly")
         app.button("approve_signature_only").click().run()
-        self.assertEqual(list(app.exception), [])
-        approvals = [c for c in self.calls if c[0] == "POST" and c[1].endswith("/approve")]
+        approvals = [c for c in self.posts() if c[1].endswith("/approve")]
         self.assertEqual([c[1].split("/")[-2] for c in approvals], ["21", "22"])
-        self.assertTrue(all(c[2] == {} for c in approvals), "an empty body signs off the proposal as written")
-        self.assertTrue(any("Approved 2 signature updates" in s.value for s in app.success))
+        self.assertTrue(all(c[2] == {} for c in approvals), "an empty body publishes the proposal as written")
 
     def test_a_proposed_drop_is_signed_off_as_a_drop_never_as_an_approval(self):
-        drop = {"id": 41, "created_at": "2026-09-25T18:00:00Z", "run_id": "owner-revision", "text": "A new drone unveiling is not a digest item.",
-                "raw_text": "A new drone unveiling is not a digest item.", "target_rule_id": "R-0034", "status": "pending", "refine_status": "proposed",
-                "refine_round": 1, "signature": {}, "source_feedback_ids": [], "owner_feedback": [],
-                "proposal": {"action": "drop", "rationale": "Fully covered by R-0001; it never changes a decision.", "duplicate_of": "R-0001",
-                             "overlaps": [], "conflicts": [], "supersedes": "R-0034"}}
+        drop = proposed(41, "A new drone unveiling is not a digest item.", None, target="R-0034", run_id="owner-revision")
+        drop["proposal"] = {"action": "drop", "rationale": "Fully covered by R-0001; it never changes a decision.", "duplicate_of": "R-0001", "overlaps": [], "conflicts": [], "supersedes": "R-0034"}
         retire = {**drop, "id": 42, "run_id": "reviewer-drop", "target_rule_id": "R-0012", "proposal": {**drop["proposal"], "duplicate_of": None, "supersedes": "R-0012"}}
         self.drafts = [drop, retire]
         app = self.start()
-        page = self.rendered(app)
-        self.assertIn("ChatGPT proposes dropping R-0034", page)
-        self.assertIn("covered by R-0001", page)
-        self.assertIn("ChatGPT proposes retiring R-0012", page)
-        self.assertIn("2 proposed drops", "\n".join(c.value for c in app.caption))
-        self.assertFalse(any("Signature-only" in e.label for e in app.expander), "a drop is never a signature-only update")
-        form = next(f for f in app.get("form") if f.proto.form.form_id == "drop_41")
-        self.assertFalse(any(b.label == "Approve" for b in form.button))
-        next(b for b in form.button if b.label == "Drop R-0034").click().run()
-        self.assertEqual(list(app.exception), [])
-        self.assertTrue(next(c for c in self.calls if c[0] == "POST")[1].endswith("/rules/drafts/41/drop"))
+        rendered = self.rendered(app)
+        self.assertIn("ChatGPT proposes dropping R-0034", rendered)
+        self.assertIn("covered by R-0001", rendered)
+        self.assertIn("ChatGPT proposes retiring R-0012", rendered)
+        self.assertFalse(any(b.key == "publish_41" for b in app.button))
+        app.button("drop_41").click().run()
+        self.assertTrue(self.posts()[-1][1].endswith("/rules/drafts/41/drop"))
         self.assertTrue(any("Dropped R-0034" in s.value for s in app.success))
+        app.button("keep_42").click().run()
+        self.assertTrue(self.posts()[-1][1].endswith("/rules/drafts/42/reject"))
 
-        form = next(f for f in app.get("form") if f.proto.form.form_id == "drop_42")
-        next(b for b in form.button if b.label == "Keep R-0012").click().run()
-        self.assertTrue([c for c in self.calls if c[0] == "POST"][-1][1].endswith("/rules/drafts/42/reject"))
-        self.assertTrue(any("Kept R-0012, unchanged" in s.value for s in app.success))
+    def test_anything_decided_in_the_last_day_can_be_undone(self):
+        self.recent = [{"id": 37, "status": "approved", "precedent_rule_id": "R-0038", "decided_at": "2026-09-27T22:31:14.844Z", "undo": {"type": "superseded"}, "undo_available": True},
+                       {"id": 12, "status": "rejected", "decided_at": "2026-09-27T20:00:00.000Z", "undo": {"type": "rejected"}, "undo_available": True}]
+        app = self.start()
+        self.assertIn("Just decided · 2 · undo within 24 h", "\n".join(e.label for e in app.expander))
+        rendered = self.rendered(app)
+        self.assertIn("Published R-0038", rendered); self.assertIn("Discarded draft #12", rendered)
+        app.button("undo_37").click().run()
+        self.assertTrue(self.posts()[-1][1].endswith("/rules/drafts/37/undo"))
+        self.assertTrue(any("Undone" in s.value for s in app.success))
+
+    def test_rules_and_items_filter_search_revise_retire_and_restore(self):
+        app = self.start()
+        app.radio("ri_filter").set_value("Items").run()
+        labels = [e.label for e in app.expander if e.label.startswith(("R-", "I-"))]
+        self.assertEqual(len(labels), 1); self.assertTrue(labels[0].startswith("I-0001 · Item"))
+        app.radio("ri_filter").set_value("All").run()
+        app.text_input("ri_search").set_value("ceremonial").run()
+        labels = [e.label for e in app.expander if e.label.startswith(("R-", "I-"))]
+        self.assertEqual(len(labels), 1); self.assertTrue(labels[0].startswith("R-0002"))
+        app.text_input("ri_note_R-0002").set_value("Only ribbon cuttings and bell ringings.")
+        app.button("ri_revise_R-0002").click().run()
+        post = self.posts()[-1]
+        self.assertTrue(post[1].endswith("/rules/R-0002/refine")); self.assertEqual(post[2], {"feedback": "Only ribbon cuttings and bell ringings."})
+        self.assertTrue(any("sent to ChatGPT as draft #13" in s.value for s in app.success))
+        app.text_input("ri_search").set_value("").run()
+        app.button("ri_retire_I-0001").click().run()
+        self.assertTrue(self.posts()[-1][1].endswith("/rules/I-0001/deactivate"))
+        app.radio("ri_filter").set_value("Inactive").run()
+        app.button("ri_restore_R-0009").click().run()
+        self.assertTrue(self.posts()[-1][1].endswith("/rules/R-0009/reactivate"))
+        app.radio("ri_filter").set_value("Rules").run()
+        app.button("rules_signature_pass").click().run()
+        self.assertTrue(self.posts()[-1][1].endswith("/rules/refine-missing"))
+
+    def test_a_trend_can_be_drafted_now(self):
+        app = self.start()
+        app.button("trend_draft_reason:not_my_focus").click().run()
+        post = self.posts()[-1]
+        self.assertTrue(post[1].endswith("/calibration/trends/draft")); self.assertEqual(post[2], {"key": "reason:not_my_focus"})
+        self.assertTrue(any("draft #55" in s.value for s in app.success))
 
     def test_audit_form_posts_summary_and_focus(self):
         app = self.start()
@@ -349,7 +391,7 @@ class RulesTabTests(unittest.TestCase):
         app.text_area("audit_focus").set_value("Grade every robotaxi rejection.")
         form = next(f for f in app.get("form") if f.proto.form.form_id == "audit_form")
         next(b for b in form.button if b.label == "Save audit").click().run()
-        post = next(c for c in self.calls if c[0] == "POST")
+        post = self.posts()[-1]
         self.assertTrue(post[1].endswith("/calibration/audit"))
         self.assertEqual(post[2], {"month": "2026-09", "summary": "Robotaxi rejections drove the disagreements.", "focus": "Grade every robotaxi rejection."})
         self.assertTrue(any("standing instruction #23" in s.value for s in app.success))

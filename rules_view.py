@@ -1,19 +1,36 @@
-"""Rules tab: write a rule, sign off ChatGPT's rewrite, manage active rules.
+"""Rules page: one loop for tuning the grader.
 
-The loop: the owner writes a rule in their own words (here, or as a
-rule-scoped grade); the aggregator queues it; the scheduled ChatGPT reviewer
-proposes a universal rewrite after its next edition; the owner approves it,
-edits it, sends it back with a note, or rejects it. Only approval activates.
+Grade an item on the feed (or write here) as a Rule or an Item; ChatGPT drafts
+it at its next run; the owner edits ChatGPT's version and sends it back (the
+edit travels with the card) or publishes it; calibration watches the owner's
+grades and starts new drafts when a pattern holds. Three tabs:
 
-Every read and write here goes through the aggregator's /rules endpoints with
-the runtime Owner PIN in a header. Nothing is cached across sessions and no
-secret is stored in this repo.
+- Drafts: cards pinned in the order that needs the owner (back from ChatGPT,
+  with ChatGPT, your turn, waiting), with Publish / Send back / Discard, and
+  Undo for anything decided in the last 24 hours.
+- Rules & Items: what the grader uses, searchable, with Revise and Retire.
+- Calibration: trends that become drafts, the scoreboard, the monthly audit.
+
+A Rule is a standing principle (optionally a hard score floor or ceiling). An
+Item is a worked example (this story, the owner's grade, the principle): the
+grader follows it for similar stories; it never binds.
+
+Every read and write goes through the aggregator's /rules and /calibration
+endpoints with the runtime Owner PIN in a header. Nothing is cached across
+sessions and no secret is stored in this repo.
 """
 
 import html
+from datetime import datetime, timedelta, timezone
 
 import requests
 import streamlit as st
+
+try:
+    from zoneinfo import ZoneInfo
+    EASTERN = ZoneInfo("America/New_York")
+except Exception:  # pragma: no cover - tzdata missing
+    EASTERN = timezone(timedelta(hours=-4))
 
 
 STATE_ORDER = ["ignored", "misapplied", "dormant", "working", None]
@@ -24,6 +41,12 @@ STATE_LABEL = {
     "dormant": ("dormant", "#718096"),
     None: ("no data yet", "#4a5568"),
 }
+KIND_LABEL = {"rule": "Rule", "item": "Item"}
+SIGNATURE_LABEL = "Applies to (workers: a, b; tickers: X; keywords: k)"
+# When ChatGPT answers drafts (America/New_York): right after each edition
+# (the review task's step 10) and at each Rule Refiner run.
+PICKUPS_ET = ["06:50", "08:50", "10:30", "11:50", "15:00", "16:50", "18:50", "21:30"]
+WAIT_NOTE = "ChatGPT answers at its next run."
 
 
 def api(base, pin, path="", payload=None, method=None):
@@ -45,9 +68,12 @@ def api(base, pin, path="", payload=None, method=None):
 
 def badge(state) -> str:
     label, color = STATE_LABEL.get(state, STATE_LABEL[None])
-    return (
-        f'<span class="rule-badge" style="background:{color}">{html.escape(label)}</span>'
-    )
+    return f'<span class="rule-badge" style="background:{color}">{html.escape(label)}</span>'
+
+
+def kind_chip(kind) -> str:
+    kind = "item" if kind in ("item", "case") else "rule"
+    return f'<span class="loop-kind loop-kind-{kind}">{KIND_LABEL[kind]}</span>'
 
 
 def signature_text(signature) -> str:
@@ -57,10 +83,6 @@ def signature_text(signature) -> str:
         if values:
             parts.append(f"{key}: {', '.join(str(v) for v in values)}")
     return " · ".join(parts) or "no signature"
-
-
-SIGNATURE_LABEL = "Signature (workers: a, b; tickers: X; keywords: k)"
-WAIT_NOTE = "ChatGPT answers after the next edition, or now if you run the rule-refiner prompt in ChatGPT."
 
 
 def parse_signature(raw: str) -> dict:
@@ -121,24 +143,25 @@ def draft_origin(draft) -> str:
     run_id = str(draft.get("run_id") or "")
     if run_id == "reviewer-drop":
         return f"ChatGPT proposes retiring {draft.get('target_rule_id')}"
+    if run_id == "calibration-trend":
+        return f"from calibration · {len(draft.get('source_feedback_ids') or [])} grades"
     if draft.get("target_rule_id"):
         return f"revision of {draft['target_rule_id']}"
     if run_id == "owner":
-        return "written on the Rules tab"
+        return "written here"
     if not run_id:
-        return "rule-scoped grade"
+        return "from a grade"
     return run_id
 
 
 def approved_message(result) -> str:
+    noun = "item" if result.get("kind") == "item" else "rule"
     if result.get("updated_in_place"):
-        return f"Updated {result.get('rule_id')} in place (signature and score bounds)"
-    message = f"Approved as {result.get('rule_id')}"
+        return f"Updated {result.get('rule_id')} in place · undo within 24 h below"
+    message = f"Published {noun} {result.get('rule_id')}"
     if result.get("superseded"):
         message += f" · replaces {result['superseded']}"
-    if result.get("distilled"):
-        message += f" · {result.get('distilled')} grade(s) distilled"
-    return message
+    return message + " · the grader uses it from the next edition · undo within 24 h"
 
 
 def sort_rules(rules):
@@ -146,287 +169,62 @@ def sort_rules(rules):
     return sorted(rules, key=lambda r: (order.get(r.get("state"), len(order)), r.get("id") or 0))
 
 
-def render_composer(base, pin):
-    st.markdown('<div class="rules-section">Write a rule</div>', unsafe_allow_html=True)
-    with st.form("rule_composer", border=True):
-        text = st.text_area(
-            "In your own words", key="composer_text", height=100,
-            placeholder="e.g. that Navy USV marketplace should have led — anything opening a program to new vendors is big",
-        )
-        event_id = st.number_input(
-            "About item (event id, optional)", min_value=1, step=1, value=None, key="composer_event",
-            help="The # on the Rejected tab. Gives ChatGPT the item your rule came from.",
-        )
-        st.caption("ChatGPT rewrites it as a universal rule (principle, boundary, score band, signature) for you to sign off. " + WAIT_NOTE)
-        if st.form_submit_button("Send to ChatGPT for a rewrite", type="primary"):
-            if len(text.strip()) < 20:
-                st.info("Write at least a sentence (20 characters) so ChatGPT has something to generalize.")
-            else:
-                _act(base, pin, "/drafts", {"text": text.strip(), "event_id": int(event_id) if event_id else None},
-                     lambda r: f"Draft #{r.get('draft_id')} {'was already queued' if r.get('duplicate') else 'queued for ChatGPT'} · {WAIT_NOTE}")
+def normalized(text) -> str:
+    return " ".join(str(text or "").split())
 
 
-def feedback_html(draft) -> str:
-    notes = [f for f in draft.get("owner_feedback") or [] if f.get("text")]
-    return "".join(
-        f'<div class="refine-note">Your note after round {html.escape(str(f.get("round", "")))}: {html.escape(str(f["text"]))}</div>'
-        for f in notes
-    )
+def next_pickup_label(now=None) -> str:
+    """The next time ChatGPT answers drafts, as '~6:50 PM ET' (or 'tomorrow ~…')."""
+    now_et = (now or datetime.now(timezone.utc)).astimezone(EASTERN)
+    for day in (0, 1):
+        date = (now_et + timedelta(days=day)).date()
+        for hhmm in PICKUPS_ET:
+            hour, minute = (int(x) for x in hhmm.split(":"))
+            at = datetime(date.year, date.month, date.day, hour, minute, tzinfo=EASTERN)
+            if at > now_et:
+                clock = at.strftime("%I:%M %p").lstrip("0")
+                return f"{'tomorrow ' if day else ''}~{clock} ET"
+    return "at its next run"
 
 
-def proposal_chips(proposal, target=None) -> str:
-    chips = []
-    sig = signature_text(proposal.get("signature"))
-    chips.append(f'<span class="refine-chip">{html.escape(sig)}</span>')
-    if effect_text(proposal.get("effect")):
-        chips.append(f'<span class="refine-chip">{html.escape(effect_text(proposal["effect"]))}</span>')
-    if proposal.get("supersedes") and proposal["supersedes"] != target:
-        chips.append(f'<span class="refine-chip warn">would replace {html.escape(proposal["supersedes"])}</span>')
-    for rule_id in proposal.get("conflicts") or []:
-        chips.append(f'<span class="refine-chip warn">conflicts with {html.escape(rule_id)}</span>')
-    for rule_id in proposal.get("overlaps") or []:
-        chips.append(f'<span class="refine-chip">overlaps {html.escape(rule_id)}</span>')
-    return '<div class="refine-chips">' + "".join(chips) + "</div>"
+# ---------------------------------------------------------------- draft states
+
+def sent_back(draft) -> bool:
+    """The owner answered a ChatGPT version (round >= 1), so the card is pinned."""
+    return any(int(f.get("round") or 0) >= 1 for f in draft.get("owner_feedback") or [])
 
 
 def is_drop(draft) -> bool:
     return (draft.get("proposal") or {}).get("action") == "drop"
 
 
-def render_drop_proposal(base, pin, draft):
-    """ChatGPT proposes dropping instead of rewriting; the owner decides."""
-    draft_id = draft.get("id")
-    proposal = draft.get("proposal") or {}
-    target = draft.get("target_rule_id")
-    subject = target or "this draft"
-    chips = []
-    if proposal.get("duplicate_of"):
-        chips.append(f'<span class="refine-chip warn">covered by {html.escape(proposal["duplicate_of"])}</span>')
-    for rule_id in proposal.get("conflicts") or []:
-        chips.append(f'<span class="refine-chip warn">conflicts with {html.escape(rule_id)}</span>')
-    for rule_id in proposal.get("overlaps") or []:
-        chips.append(f'<span class="refine-chip">overlaps {html.escape(rule_id)}</span>')
-    with st.container(border=True):
-        st.markdown(
-            f'<div class="rule-meta">Draft #{draft_id} · {html.escape(draft_origin(draft))} · '
-            f'round {draft.get("refine_round") or 1} · ChatGPT proposes dropping {html.escape(subject)}</div>',
-            unsafe_allow_html=True,
-        )
-        rule, reason = st.columns(2)
-        rule.markdown(
-            f'<div class="refine-label">{"The rule" if target else "Your words"}</div>'
-            f'<div class="refine-owner">{html.escape(str(draft.get("raw_text") or draft.get("text") or ""))}</div>'
-            + feedback_html(draft),
-            unsafe_allow_html=True,
-        )
-        reason.markdown(
-            "<div class=\"refine-label\">Why ChatGPT would drop it</div>"
-            f'<div class="rule-text">{html.escape(str(proposal.get("rationale") or ""))}</div>'
-            + ('<div class="refine-chips">' + "".join(chips) + "</div>" if chips else ""),
-            unsafe_allow_html=True,
-        )
-        with st.form(f"drop_{draft_id}", border=False):
-            if target:
-                st.caption(f"Dropping retires {target}: it moves to inactive rules and can be reactivated. Keeping leaves it exactly as it is.")
-            note = st.text_input("Or send back for a rewrite (what should the rule say?)", key=f"drop_note_{draft_id}")
-            drop, keep, rewrite = st.columns(3)
-            if drop.form_submit_button(f"Drop {subject}", type="primary"):
-                _act(base, pin, f"/drafts/{draft_id}/drop", {},
-                     lambda r: f"Dropped {r['dropped']} · reactivate it from inactive rules if needed" if r.get("dropped") else f"Draft #{draft_id} dropped")
-            if keep.form_submit_button(f"Keep {subject}"):
-                _act(base, pin, f"/drafts/{draft_id}/reject", {}, lambda r: f"Kept {target}, unchanged" if target else f"Draft #{draft_id} closed")
-            if rewrite.form_submit_button("Rewrite instead"):
-                if len(note.strip()) < 5:
-                    st.info("Add a note saying what the rule should say, so the rewrite answers exactly that.")
-                else:
-                    _act(base, pin, f"/drafts/{draft_id}/refine", {"feedback": note.strip()}, lambda r: f"Draft #{draft_id} sent back · {WAIT_NOTE}")
-
-
-def render_proposal(base, pin, draft):
-    """ChatGPT's rewrite beside the owner's words, with the sign-off form."""
-    if is_drop(draft):
-        render_drop_proposal(base, pin, draft)
-        return
-    draft_id = draft.get("id")
-    proposal = draft.get("proposal") or {}
-    target = draft.get("target_rule_id")
-    with st.container(border=True):
-        st.markdown(
-            f'<div class="rule-meta">Draft #{draft_id} · {html.escape(draft_origin(draft))} · '
-            f'round {draft.get("refine_round") or 1} · ready to sign off</div>',
-            unsafe_allow_html=True,
-        )
-        mine, theirs = st.columns(2)
-        mine.markdown(
-            '<div class="refine-label">Your words</div>'
-            f'<div class="refine-owner">{html.escape(str(draft.get("raw_text") or draft.get("text") or ""))}</div>'
-            + feedback_html(draft),
-            unsafe_allow_html=True,
-        )
-        theirs.markdown(
-            "<div class=\"refine-label\">ChatGPT's rule</div>"
-            f'<div class="rule-text">{html.escape(str(proposal.get("text") or ""))}</div>'
-            + (f'<div class="refine-note">{html.escape(str(proposal["rationale"]))}</div>' if proposal.get("rationale") else "")
-            + proposal_chips(proposal, target),
-            unsafe_allow_html=True,
-        )
-        with st.form(f"proposal_{draft_id}", border=False):
-            text = st.text_area("Rule text to approve (edit if one word is off)", value=str(proposal.get("text") or ""),
-                                key=f"proposal_text_{draft_id}", height=150)
-            signature = st.text_input(SIGNATURE_LABEL, value=signature_value(proposal.get("signature")), key=f"proposal_sig_{draft_id}")
-            floor, ceiling = effect_inputs(f"proposal_{draft_id}", proposal.get("effect"))
-            replace = False
-            if target:
-                st.caption(f"Approving updates {target} in place when the text is unchanged, and supersedes it otherwise.")
-            elif proposal.get("supersedes"):
-                replace = st.checkbox(f"Replace {proposal['supersedes']} with this rule (it is superseded, history kept)", key=f"proposal_replace_{draft_id}")
-            note = st.text_input("Send-back note (what did the rewrite get wrong?)", key=f"proposal_note_{draft_id}")
-            approve, send_back, reject = st.columns(3)
-            if approve.form_submit_button("Approve", type="primary"):
-                payload = {"text": text.strip(), "signature": parse_signature(signature), "effect": effect_payload(floor, ceiling)}
-                if replace:
-                    payload["supersedes"] = proposal["supersedes"]
-                _act(base, pin, f"/drafts/{draft_id}/approve", payload, approved_message)
-            if send_back.form_submit_button("Send back to ChatGPT"):
-                if len(note.strip()) < 5:
-                    st.info("Add a send-back note saying what the rewrite got wrong, so the next one can fix exactly that.")
-                else:
-                    _act(base, pin, f"/drafts/{draft_id}/refine", {"feedback": note.strip()}, lambda r: f"Draft #{draft_id} sent back · {WAIT_NOTE}")
-            if reject.form_submit_button("Reject"):
-                _act(base, pin, f"/drafts/{draft_id}/reject", {}, lambda r: f"Draft #{draft_id} rejected")
-
-
-def render_queued(base, pin, draft):
-    """Waiting for ChatGPT: the owner's words, and a way out."""
-    draft_id = draft.get("id")
-    words = str(draft.get("raw_text") or draft.get("text") or "")
-    with st.container(border=True):
-        st.markdown(
-            f'<div class="rule-meta">Draft #{draft_id} · {html.escape(draft_origin(draft))} · waiting for ChatGPT\'s rewrite · '
-            f'queued {html.escape(str(draft.get("created_at") or "")[:10])}</div>'
-            f'<div class="refine-owner">{html.escape(words)}</div>' + feedback_html(draft),
-            unsafe_allow_html=True,
-        )
-        with st.form(f"queued_{draft_id}", border=False):
-            if draft.get("target_rule_id"):
-                if st.form_submit_button("Withdraw"):
-                    _act(base, pin, f"/drafts/{draft_id}/reject", {}, lambda r: f"Draft #{draft_id} withdrawn")
-                return
-            text = st.text_area("Or approve your own wording now", value=words, key=f"queued_text_{draft_id}", height=90)
-            approve, reject = st.columns(2)
-            if approve.form_submit_button("Approve my wording"):
-                _act(base, pin, f"/drafts/{draft_id}/approve", {"text": text.strip(), "signature": draft.get("signature") or {}}, approved_message)
-            if reject.form_submit_button("Withdraw"):
-                _act(base, pin, f"/drafts/{draft_id}/reject", {}, lambda r: f"Draft #{draft_id} withdrawn")
-
-
-def render_plain_draft(base, pin, draft):
-    """A weekly-distillation draft: edit and approve directly, or ask for a rewrite."""
-    draft_id = draft.get("id")
-    with st.container(border=True):
-        st.markdown(
-            f'<div class="rule-meta">Draft #{draft_id} · {html.escape(draft_origin(draft))} · '
-            f'{html.escape(str(draft.get("created_at") or "")[:10])} · '
-            f'sources: {", ".join(str(i) for i in draft.get("source_feedback_ids") or []) or "none"}</div>',
-            unsafe_allow_html=True,
-        )
-        with st.form(f"draft_{draft_id}", border=False):
-            text = st.text_area("Rule text", value=str(draft.get("text") or ""), key=f"draft_text_{draft_id}", height=110)
-            signature = st.text_input(SIGNATURE_LABEL, value=signature_value(draft.get("signature")), key=f"draft_sig_{draft_id}")
-            approve, reject, save, refine = st.columns(4)
-            if approve.form_submit_button("Approve", type="primary"):
-                _act(base, pin, f"/drafts/{draft_id}/approve", {"text": text.strip(), "signature": parse_signature(signature)}, approved_message)
-            if reject.form_submit_button("Reject"):
-                _act(base, pin, f"/drafts/{draft_id}/reject", {}, lambda r: f"Draft #{draft_id} rejected")
-            if save.form_submit_button("Save edit"):
-                _act(base, pin, f"/drafts/{draft_id}/edit", {"text": text.strip(), "signature": parse_signature(signature)},
-                     lambda r: f"Draft #{draft_id} updated")
-            if refine.form_submit_button("Ask ChatGPT to refine"):
-                _act(base, pin, f"/drafts/{draft_id}/refine", {}, lambda r: f"Draft #{draft_id} queued for ChatGPT · {WAIT_NOTE}")
-
-
-def render_drafts(base, pin, drafts):
-    st.markdown(
-        f'<div class="rules-section">Pending drafts · {len(drafts)}</div>',
-        unsafe_allow_html=True,
-    )
-    if not drafts:
-        st.caption("No drafts waiting. Write a rule above, grade with rule scope, or wait for the weekly distillation.")
-        return
-    proposed = [d for d in drafts if d.get("refine_status") == "proposed"]
-    queued = [d for d in drafts if d.get("refine_status") == "queued"]
-    plain = [d for d in drafts if d.get("refine_status") not in ("proposed", "queued")]
-    signature_only = [d for d in proposed if is_signature_only(d)]
-    drops = [d for d in proposed if is_drop(d)]
-    if proposed or queued:
-        st.caption(f"{len(proposed)} ready to sign off"
-                   + (f" ({len(drops)} proposed drop{'s' if len(drops) != 1 else ''})" if drops else "")
-                   + f" · {len(queued)} waiting for ChatGPT's rewrite")
-    if signature_only:
-        render_signature_only(base, pin, signature_only)
-    for draft in proposed:
-        if draft not in signature_only:
-            render_proposal(base, pin, draft)
-    for draft in plain:
-        render_plain_draft(base, pin, draft)
-    if len(queued) > 3:
-        with st.expander(f"Waiting for ChatGPT's rewrite · {len(queued)}"):
-            for draft in queued:
-                render_queued(base, pin, draft)
-    else:
-        for draft in queued:
-            render_queued(base, pin, draft)
-
-
-def normalized(text) -> str:
-    return " ".join(str(text or "").split())
-
-
 def is_signature_only(draft) -> bool:
     """A revision whose rewrite keeps the rule's text and sets no score bounds:
-    approving it only changes when the rule applies, not what it says."""
+    publishing it only changes when the rule applies, not what it says."""
     proposal = draft.get("proposal") or {}
-    return bool(draft.get("target_rule_id")) and not is_drop(draft) \
+    return bool(draft.get("target_rule_id")) and not is_drop(draft) and not sent_back(draft) \
         and normalized(proposal.get("text")) == normalized(draft.get("raw_text")) and not proposal.get("effect")
 
 
-def render_signature_only(base, pin, drafts):
-    """Signature passes arrive in bulk; list them compactly with one approval."""
-    with st.expander(f"Signature-only updates · {len(drafts)} (text unchanged, no score bounds)", expanded=True):
-        st.markdown(
-            '<div class="rules-list">' + "".join(
-                '<div class="rule-row">'
-                f'<div class="rule-head"><span class="rule-id">{html.escape(str(d.get("target_rule_id")))}</span>'
-                f'<span class="rule-meta">draft #{d.get("id")}</span></div>'
-                f'<div class="rule-meta">{html.escape(signature_text((d.get("proposal") or {}).get("signature")))}</div>'
-                + (f'<div class="refine-note">{html.escape(str(d["proposal"]["rationale"]))}</div>' if (d.get("proposal") or {}).get("rationale") else "")
-                + "</div>"
-                for d in drafts
-            ) + "</div>",
-            unsafe_allow_html=True,
-        )
-        st.caption("Approving sets each rule's signature in place; the rule text and its score bounds stay as they are. "
-                   "To edit, send back or reject one, pick it below.")
-        if st.button(f"Approve all {len(drafts)} signature updates", type="primary", key="approve_signature_only"):
-            approved, errors = 0, []
-            for draft in drafts:
-                try:
-                    api(base, pin, f"/drafts/{draft['id']}/approve", {}, method="POST")
-                    approved += 1
-                except ValueError as exc:
-                    errors.append(f"#{draft['id']}: {exc}")
-            if errors:
-                st.error(f"{approved} approved; {len(errors)} failed: " + "; ".join(errors[:5]))
-            else:
-                flash(f"Approved {approved} signature updates · calibration and binding can now tell when those rules apply")
-        labels = {f"{d.get('target_rule_id')} · draft #{d.get('id')}": d for d in drafts}
-        pick = st.selectbox("Review one individually", ["—"] + list(labels), key="signature_only_pick")
-        if pick in labels:
-            render_proposal(base, pin, labels[pick])
+def classify(drafts) -> dict:
+    groups = {"back": [], "with_chatgpt": [], "your_turn": [], "signature_only": [], "waiting": []}
+    for draft in drafts:
+        status = draft.get("refine_status")
+        if status == "queued":
+            groups["with_chatgpt" if sent_back(draft) else "waiting"].append(draft)
+        elif status == "proposed" and sent_back(draft):
+            groups["back"].append(draft)
+        elif status == "proposed" and is_signature_only(draft):
+            groups["signature_only"].append(draft)
+        else:
+            groups["your_turn"].append(draft)
+    return groups
 
+
+# ---------------------------------------------------------------- actions
 
 def flash(message: str) -> None:
-    """Show a success message after a full rerun, so every list on the tab
+    """Show a success message after a full rerun, so every list on the page
     reflects the change that was just made."""
     st.session_state["rules_flash"] = message
     st.rerun()
@@ -441,85 +239,408 @@ def _act(base, pin, path, payload, message):
     flash(message(result))
 
 
+# ---------------------------------------------------------------- drafts tab
+
+def render_composer(base, pin):
+    with st.form("rule_composer", border=True):
+        st.markdown('<div class="rules-section" style="margin-top:0">New</div>', unsafe_allow_html=True)
+        kind = st.radio("This is", ["Rule", "Item"], horizontal=True, key="composer_kind",
+                        help="Rule: a standing principle. Item: a worked example that guides the grader but never binds. "
+                             "Items are best made from the feed's Grade row, which links the story.")
+        text = st.text_area("In your own words", key="composer_text", height=90,
+                            placeholder="e.g. counter-drone orders under $1M are borderline unless it's a covered company")
+        if st.form_submit_button("Send to ChatGPT", type="primary"):
+            if len(text.strip()) < 20:
+                st.info("Write at least a sentence (20 characters) so ChatGPT has something to work with.")
+            else:
+                _act(base, pin, "/drafts", {"text": text.strip(), "kind": kind.lower()},
+                     lambda r: f"{KIND_LABEL.get(r.get('kind'), 'Draft')} draft #{r.get('draft_id')} "
+                               f"{'was already queued' if r.get('duplicate') else 'sent to ChatGPT'} · back {next_pickup_label()}")
+
+
+def recent_label(draft) -> str:
+    undo = draft.get("undo") or {}
+    target = draft.get("precedent_rule_id") or draft.get("target_rule_id") or f"draft #{draft.get('id')}"
+    if draft.get("status") == "rejected":
+        return f"Discarded draft #{draft.get('id')}"
+    if undo.get("type") == "dropped" or draft.get("approved_variant") == "drop":
+        return f"Dropped {target}"
+    if undo.get("type") == "in_place":
+        return f"Updated {target} in place"
+    return f"Published {target}"
+
+
+def render_recent(base, pin, recent):
+    if not recent:
+        return
+    with st.expander(f"Just decided · {len(recent)} · undo within 24 h"):
+        for draft in recent:
+            label, button = st.columns([5, 1])
+            label.markdown(
+                f'<div class="rule-meta" style="margin-top:8px">{html.escape(recent_label(draft))} · '
+                f'{html.escape(str(draft.get("decided_at") or "")[11:16])} UTC</div>',
+                unsafe_allow_html=True,
+            )
+            if button.button("Undo", key=f"undo_{draft['id']}"):
+                _act(base, pin, f"/drafts/{draft['id']}/undo", {}, lambda r: f"Undone · draft #{r.get('draft_id')} is back in Drafts")
+
+
+def card_header(draft, status) -> str:
+    return (
+        '<div class="loop-card-head">'
+        + kind_chip(draft.get("kind"))
+        + f'<span class="rule-meta" style="margin-top:0">Draft #{draft.get("id")} · {html.escape(draft_origin(draft))}'
+        + f' · round {draft.get("refine_round") or 0} · {html.escape(status)}</span></div>'
+    )
+
+
+def history_html(draft) -> str:
+    rows = []
+    for f in draft.get("owner_feedback") or []:
+        if f.get("edit"):
+            rows.append(f'<div class="refine-note">You sent back (round {html.escape(str(f.get("round", "")))}): {html.escape(str(f["edit"]))}</div>')
+        if f.get("text"):
+            rows.append(f'<div class="refine-note">Your note (round {html.escape(str(f.get("round", "")))}): {html.escape(str(f["text"]))}</div>')
+    return "".join(rows)
+
+
+def applies_html(proposal, target=None, kind="rule") -> str:
+    chips = [f'<span class="refine-chip">{html.escape(signature_text(proposal.get("signature")))}</span>']
+    if kind != "item" and effect_text(proposal.get("effect")):
+        chips.append(f'<span class="refine-chip">{html.escape(effect_text(proposal["effect"]))}</span>')
+    if proposal.get("supersedes") and proposal["supersedes"] != target:
+        chips.append(f'<span class="refine-chip warn">would replace {html.escape(proposal["supersedes"])}</span>')
+    for rule_id in proposal.get("conflicts") or []:
+        chips.append(f'<span class="refine-chip warn">conflicts with {html.escape(rule_id)}</span>')
+    for rule_id in proposal.get("overlaps") or []:
+        chips.append(f'<span class="refine-chip">overlaps {html.escape(rule_id)}</span>')
+    return '<div class="refine-chips">' + "".join(chips) + "</div>"
+
+
+def render_card(base, pin, draft, status):
+    """One draft: ChatGPT's version in an editable box, and three buttons."""
+    draft_id = draft.get("id")
+    proposal = draft.get("proposal") or {}
+    target = draft.get("target_rule_id")
+    kind = draft.get("kind") or "rule"
+    base_text = str(proposal.get("text") or draft.get("text") or "")
+    with st.container(border=True):
+        st.markdown(card_header(draft, status), unsafe_allow_html=True)
+        text = st.text_area("ChatGPT's version (edit it, then publish or send back)" if proposal.get("text") else "Your draft",
+                            value=base_text, key=f"card_text_{draft_id}", height=110)
+        st.markdown(
+            applies_html(proposal or {"signature": draft.get("signature")}, target, kind)
+            + (f'<div class="refine-note">{html.escape(str(proposal["rationale"]))}</div>' if proposal.get("rationale") else ""),
+            unsafe_allow_html=True,
+        )
+        note = st.text_input("Note to ChatGPT (optional)", key=f"card_note_{draft_id}",
+                             placeholder="what else to change; your edits above go back with the card")
+        details = st.toggle("Details", key=f"card_details_{draft_id}")
+        signature, floor, ceiling, replace = None, None, None, False
+        if details:
+            st.markdown(
+                f'<div class="refine-label">{"The rule now" if target else "Your words"}</div>'
+                f'<div class="refine-owner">{html.escape(str(draft.get("raw_text") or draft.get("text") or ""))}</div>'
+                + history_html(draft),
+                unsafe_allow_html=True,
+            )
+            signature = st.text_input(SIGNATURE_LABEL, value=signature_value(proposal.get("signature") or draft.get("signature")), key=f"card_sig_{draft_id}")
+            if kind != "item":
+                floor, ceiling = effect_inputs(f"card_{draft_id}", proposal.get("effect"))
+                if proposal.get("supersedes") and not target:
+                    replace = st.checkbox(f"Replace {proposal['supersedes']} with this rule (history kept)", key=f"card_replace_{draft_id}")
+        publish, send, discard = st.columns(3)
+        if publish.button("Publish", type="primary", key=f"publish_{draft_id}"):
+            payload = {"text": text.strip()}
+            if details:
+                payload["signature"] = parse_signature(signature)
+                if kind != "item":
+                    payload["effect"] = effect_payload(floor, ceiling)
+                if replace:
+                    payload["supersedes"] = proposal["supersedes"]
+            _act(base, pin, f"/drafts/{draft_id}/approve", payload, approved_message)
+        if send.button("Send back to ChatGPT", key=f"sendback_{draft_id}"):
+            edited = text.strip()
+            payload = {}
+            if normalized(edited) != normalized(base_text):
+                payload["text"] = edited
+            if note.strip():
+                payload["feedback"] = note.strip()
+            if not payload:
+                st.info("Edit the text or add a note, so ChatGPT knows what to change.")
+            else:
+                _act(base, pin, f"/drafts/{draft_id}/refine", payload,
+                     lambda r: f"Draft #{draft_id} sent back{' with your edit' if r.get('edit') else ''} · pinned at the top until ChatGPT returns it {next_pickup_label()}")
+        if discard.button("Discard", key=f"discard_{draft_id}"):
+            _act(base, pin, f"/drafts/{draft_id}/reject", {},
+                 lambda r: f"Draft #{draft_id} discarded{f'; {target} unchanged' if target else ''} · undo within 24 h")
+
+
+def render_drop_card(base, pin, draft):
+    """ChatGPT proposes dropping instead of rewriting; the owner decides."""
+    draft_id = draft.get("id")
+    proposal = draft.get("proposal") or {}
+    target = draft.get("target_rule_id")
+    subject = target or "this draft"
+    chips = []
+    if proposal.get("duplicate_of"):
+        chips.append(f'<span class="refine-chip warn">covered by {html.escape(proposal["duplicate_of"])}</span>')
+    for rule_id in proposal.get("conflicts") or []:
+        chips.append(f'<span class="refine-chip warn">conflicts with {html.escape(rule_id)}</span>')
+    with st.container(border=True):
+        st.markdown(card_header(draft, f"ChatGPT proposes dropping {subject}"), unsafe_allow_html=True)
+        st.markdown(
+            f'<div class="refine-owner">{html.escape(str(draft.get("raw_text") or draft.get("text") or ""))}</div>'
+            '<div class="refine-label" style="margin-top:10px">Why ChatGPT would drop it</div>'
+            f'<div class="rule-text">{html.escape(str(proposal.get("rationale") or ""))}</div>'
+            + ('<div class="refine-chips">' + "".join(chips) + "</div>" if chips else ""),
+            unsafe_allow_html=True,
+        )
+        note = st.text_input("Or say what it should say, and send it back for a rewrite", key=f"drop_note_{draft_id}")
+        drop, keep, rewrite = st.columns(3)
+        if drop.button(f"Drop {subject}", type="primary", key=f"drop_{draft_id}"):
+            _act(base, pin, f"/drafts/{draft_id}/drop", {},
+                 lambda r: f"Dropped {r['dropped']} · undo within 24 h" if r.get("dropped") else f"Draft #{draft_id} dropped")
+        if keep.button(f"Keep {subject}", key=f"keep_{draft_id}"):
+            _act(base, pin, f"/drafts/{draft_id}/reject", {}, lambda r: f"Kept {target}, unchanged" if target else f"Draft #{draft_id} closed")
+        if rewrite.button("Rewrite instead", key=f"rewrite_{draft_id}"):
+            if len(note.strip()) < 5:
+                st.info("Add a note saying what it should say, so the rewrite answers exactly that.")
+            else:
+                _act(base, pin, f"/drafts/{draft_id}/refine", {"feedback": note.strip()},
+                     lambda r: f"Draft #{draft_id} sent back · back {next_pickup_label()}")
+
+
+def render_waiting_row(base, pin, draft, pinned: bool):
+    draft_id = draft.get("id")
+    sent = draft.get("owner_edit") or next((f.get("text") for f in reversed(draft.get("owner_feedback") or []) if f.get("text")), None)
+    words = sent if pinned and sent else str(draft.get("raw_text") or draft.get("text") or "")
+    with st.container(border=True):
+        text_col, button_col = st.columns([6, 1])
+        text_col.markdown(
+            card_header(draft, f"with ChatGPT · back {next_pickup_label()}")
+            + f'<div class="refine-owner">{"You sent: " if pinned and sent else ""}{html.escape(words)}</div>',
+            unsafe_allow_html=True,
+        )
+        if button_col.button("Withdraw", key=f"withdraw_{draft_id}"):
+            _act(base, pin, f"/drafts/{draft_id}/reject", {}, lambda r: f"Draft #{draft_id} withdrawn · undo within 24 h")
+
+
+def render_signature_only(base, pin, drafts):
+    """Signature passes arrive in bulk; list them compactly with one approval."""
+    with st.expander(f"Signature-only updates · {len(drafts)} (text unchanged, no score bounds)"):
+        st.markdown(
+            '<div class="rules-list">' + "".join(
+                '<div class="rule-row">'
+                f'<div class="rule-head"><span class="rule-id">{html.escape(str(d.get("target_rule_id")))}</span>'
+                f'<span class="rule-meta">draft #{d.get("id")}</span></div>'
+                f'<div class="rule-meta">{html.escape(signature_text((d.get("proposal") or {}).get("signature")))}</div>'
+                + "</div>"
+                for d in drafts
+            ) + "</div>",
+            unsafe_allow_html=True,
+        )
+        if st.button(f"Publish all {len(drafts)} signature updates", type="primary", key="approve_signature_only"):
+            approved, errors = 0, []
+            for draft in drafts:
+                try:
+                    api(base, pin, f"/drafts/{draft['id']}/approve", {}, method="POST")
+                    approved += 1
+                except ValueError as exc:
+                    errors.append(f"#{draft['id']}: {exc}")
+            if errors:
+                st.error(f"{approved} published; {len(errors)} failed: " + "; ".join(errors[:5]))
+            else:
+                flash(f"Published {approved} signature updates · undo any of them within 24 h")
+
+
+def section(title: str, count: int) -> None:
+    st.markdown(f'<div class="rules-section">{html.escape(title)} · {count}</div>', unsafe_allow_html=True)
+
+
+def render_drafts_tab(base, pin):
+    render_composer(base, pin)
+    try:
+        drafts = api(base, pin, "/drafts?status=pending")["drafts"]
+        recent = api(base, pin, "/drafts?status=recent")["drafts"]
+    except ValueError as exc:
+        st.error(str(exc))
+        return
+    render_recent(base, pin, recent)
+    groups = classify(drafts)
+    if not drafts:
+        st.caption("Nothing waiting. Grade an item on the feed with a ruling, or write one above.")
+        return
+    st.caption(
+        f"{len(groups['back']) + len(groups['your_turn']) + len(groups['signature_only'])} for you · "
+        f"{len(groups['with_chatgpt']) + len(groups['waiting'])} with ChatGPT · next ChatGPT run {next_pickup_label()}"
+    )
+    if groups["back"]:
+        section("Back from ChatGPT", len(groups["back"]))
+        for draft in groups["back"]:
+            render_drop_card(base, pin, draft) if is_drop(draft) else render_card(base, pin, draft, "your edit applied · ready")
+    if groups["with_chatgpt"]:
+        section("With ChatGPT", len(groups["with_chatgpt"]))
+        for draft in groups["with_chatgpt"]:
+            render_waiting_row(base, pin, draft, pinned=True)
+    if groups["your_turn"] or groups["signature_only"]:
+        section("Your turn", len(groups["your_turn"]) + len(groups["signature_only"]))
+        if groups["signature_only"]:
+            render_signature_only(base, pin, groups["signature_only"])
+        for draft in groups["your_turn"]:
+            if is_drop(draft):
+                render_drop_card(base, pin, draft)
+            else:
+                render_card(base, pin, draft, "ready" if draft.get("refine_status") == "proposed" else "not sent to ChatGPT")
+    if groups["waiting"]:
+        with st.expander(f"Waiting for ChatGPT's first version · {len(groups['waiting'])}"):
+            for draft in groups["waiting"]:
+                render_waiting_row(base, pin, draft, pinned=False)
+
+
+# ---------------------------------------------------------------- rules & items tab
+
 def render_signature_pass(base, pin, rules):
     """Rules with no signature never match an item, so calibration cannot judge
     them and the reviewer's packet hints never show them."""
     missing = [r for r in rules if r.get("active") and str(r.get("rule_id") or "").startswith("R-0") and signature_is_empty(r.get("signature"))]
     if not missing:
         return
-    st.caption(
-        f"{len(missing)} active rule{'s have' if len(missing) != 1 else ' has'} no signature, so nothing can tell when "
-        f"{'they apply' if len(missing) != 1 else 'it applies'}: calibration shows no data and binding cannot check them."
-    )
+    st.caption(f"{len(missing)} active rule{'s have' if len(missing) != 1 else ' has'} no signature, so nothing can tell when it applies.")
     if st.button(f"Ask ChatGPT to write signatures ({len(missing)})", key="rules_signature_pass"):
-        _act(base, pin, "/refine-missing", {}, lambda r: f"{r.get('queued')} revision(s) queued for ChatGPT · you sign off each one · {WAIT_NOTE}")
+        _act(base, pin, "/refine-missing", {}, lambda r: f"{r.get('queued')} revision(s) sent to ChatGPT · they come back to Drafts")
 
 
-def render_rules(base, pin, rules, include_inactive):
-    st.markdown(
-        f'<div class="rules-section">{"All" if include_inactive else "Active"} rules · {len(rules)}</div>',
-        unsafe_allow_html=True,
-    )
-    render_signature_pass(base, pin, rules)
-    rows = []
-    for rule in sort_rules(rules):
-        inactive = not rule.get("active")
-        rows.append(
-            '<div class="rule-row' + (" inactive" if inactive else "") + '">'
-            f'<div class="rule-head"><span class="rule-id">{html.escape(str(rule.get("rule_id")))}</span>'
-            f'{badge(rule.get("state"))}'
-            + (f'<span class="rule-meta">superseded by #{rule.get("superseded_by")}</span>' if rule.get("superseded_by") else "")
-            + (f'<span class="rule-meta">folded into brief {html.escape(str(rule.get("folded_into_brief_at"))[:10])}</span>' if rule.get("folded_into_brief_at") else "")
-            + "</div>"
-            f'<div class="rule-text">{html.escape(str(rule.get("text") or ""))}</div>'
-            f'<div class="rule-meta">{html.escape(signature_text(rule.get("signature")))} · '
-            + (f'{html.escape(effect_text(rule.get("effect")))} · ' if effect_text(rule.get("effect")) else "")
-            + f'{html.escape(str(rule.get("source") or ""))} · {html.escape(str(rule.get("created_at") or "")[:10])}</div>'
-            "</div>"
-        )
-    st.markdown('<div class="rules-list">' + "".join(rows) + "</div>", unsafe_allow_html=True)
+def matches(entry, query) -> bool:
+    if not query:
+        return True
+    haystack = " ".join([str(entry.get("rule_id") or ""), str(entry.get("text") or ""), signature_text(entry.get("signature"))]).lower()
+    return all(term in haystack for term in query.lower().split())
 
-    active_ids = [r["rule_id"] for r in rules if r.get("active")]
-    if not active_ids:
+
+def render_rules_items_tab(base, pin):
+    search_col, filter_col = st.columns([3, 2])
+    query = search_col.text_input("Search", key="ri_search", placeholder="company, keyword or id")
+    view = filter_col.radio("Show", ["All", "Rules", "Items", "Inactive"], horizontal=True, key="ri_filter")
+    inactive = view == "Inactive"
+    try:
+        rules = api(base, pin, "?include=inactive" if inactive else "")["rules"]
+        items = api(base, pin, "/items?include=inactive" if inactive else "/items")["items"]
+    except ValueError as exc:
+        st.error(str(exc))
         return
-    with st.expander("Change a rule: revise with ChatGPT, supersede, score bounds, deactivate"):
-        with st.form("rule_action", border=False):
-            rule_id = st.selectbox("Rule", active_ids, key="rule_action_id")
-            revise_note = st.text_input("Note for ChatGPT (revise) — what should change?", key="rule_action_revise",
-                                        placeholder="e.g. too broad: only uncrewed maritime and air programs")
-            text = st.text_area("Replacement text (supersede only)", key="rule_action_text", height=100,
-                                placeholder="State the principle, then the boundary. The old rule becomes inactive and points at the new one.")
-            signature = st.text_input("Signature (workers: a, b; tickers: X; keywords: k) — sets what calibration counts as applicable", key="rule_action_signature")
-            floor, ceiling = effect_inputs("rule_action", None)
-            fold_version = st.text_input("Fold into brief version (e.g. 2026.10.1) — the rule is archived when that brief deploys", key="rule_action_fold")
-            revise, set_bounds = st.columns(2)
-            if revise.form_submit_button("Ask ChatGPT to revise"):
-                _act(base, pin, f"/{rule_id}/refine", {"feedback": revise_note.strip()}, lambda r: f"Revision of {r.get('rule_id')} queued as draft #{r.get('draft_id')} · {WAIT_NOTE}")
-            if set_bounds.form_submit_button("Set score bounds"):
-                effect = effect_payload(floor, ceiling)
-                _act(base, pin, f"/{rule_id}/effect", {"effect": effect},
-                     lambda r: f"{r.get('rule_id')} score bounds: {effect_text(r.get('effect')) or 'none'}")
-            supersede, deactivate, set_sig, fold = st.columns(4)
-            if set_sig.form_submit_button("Set signature"):
-                _act(base, pin, f"/{rule_id}/signature", {"signature": parse_signature(signature)}, lambda r: f"{r.get('rule_id')} signature updated")
-            if fold.form_submit_button("Fold into brief"):
-                if not fold_version.strip():
-                    st.info("Enter the brief version the rule was folded into.")
-                else:
-                    _act(base, pin, f"/{rule_id}/fold", {"brief_version": fold_version.strip()}, lambda r: f"{r.get('rule_id')} folded into {r.get('brief_version')} · archived when it deploys")
-            if supersede.form_submit_button("Supersede", type="primary"):
-                if len(text.strip()) < 20:
-                    st.info("Replacement text needs at least 20 characters.")
-                else:
-                    _act(base, pin, f"/{rule_id}/supersede", {"text": text.strip()}, lambda r: f"{r.get('superseded')} superseded by {r.get('rule_id')}")
-            if deactivate.form_submit_button("Deactivate"):
-                _act(base, pin, f"/{rule_id}/deactivate", {}, lambda r: f"{r.get('rule_id')} deactivated")
+    entries = []
+    if view in ("All", "Rules", "Inactive"):
+        entries += [dict(r, type="rule") for r in sort_rules(rules)]
+    if view in ("All", "Items", "Inactive"):
+        entries += [dict(i, type="item") for i in items]
+    if inactive:
+        entries = [e for e in entries if not e.get("active")]
+    shown = [e for e in entries if matches(e, query)]
+    st.caption(f"{len([e for e in entries if e['type'] == 'rule'])} rules · {len([e for e in entries if e['type'] == 'item'])} items"
+               + (f" · {len(shown)} match" if query else ""))
+    for entry in shown:
+        rule_id = str(entry.get("rule_id"))
+        state = STATE_LABEL.get(entry.get("state"), STATE_LABEL[None])[0] if entry["type"] == "rule" else "guides"
+        title = f"{rule_id} · {'Item' if entry['type'] == 'item' else 'Rule'} · {state}{'' if entry.get('active') else ' · inactive'} — {normalized(entry.get('text'))[:90]}"
+        with st.expander(title):
+            st.markdown(
+                f'<div class="rule-text">{html.escape(str(entry.get("text") or ""))}</div>'
+                f'<div class="rule-meta">{html.escape(signature_text(entry.get("signature")))}'
+                + (f' · {html.escape(effect_text(entry.get("effect")))}' if effect_text(entry.get("effect")) else "")
+                + (f' · superseded by #{entry.get("superseded_by")}' if entry.get("superseded_by") else "")
+                + f' · {html.escape(str(entry.get("created_at") or "")[:10])}</div>',
+                unsafe_allow_html=True,
+            )
+            if entry.get("active"):
+                note = st.text_input("What should change?", key=f"ri_note_{rule_id}", placeholder="e.g. too broad: maritime and air programs only")
+                revise, retire = st.columns(2)
+                if revise.button("Revise with ChatGPT", key=f"ri_revise_{rule_id}"):
+                    _act(base, pin, f"/{rule_id}/refine", {"feedback": note.strip()},
+                         lambda r: f"Revision of {r.get('rule_id')} sent to ChatGPT as draft #{r.get('draft_id')} · back in Drafts {next_pickup_label()}")
+                if retire.button("Retire", key=f"ri_retire_{rule_id}"):
+                    _act(base, pin, f"/{rule_id}/deactivate", {}, lambda r: f"{r.get('rule_id')} retired · restore it from Inactive")
+            elif not entry.get("superseded_by"):
+                if st.button("Restore", key=f"ri_restore_{rule_id}"):
+                    _act(base, pin, f"/{rule_id}/reactivate", {}, lambda r: f"{r.get('rule_id')} restored")
+    if view in ("All", "Rules"):
+        render_signature_pass(base, pin, rules)
 
+
+# ---------------------------------------------------------------- calibration tab
+
+TREND_STATUS = {
+    "drafted": ("drafted", "#2b6cb0"),
+    "ready": ("ready", "#2f855a"),
+    "watching": ("watching", "#4a5568"),
+    "covered": ("covered", "#718096"),
+    "dismissed": ("dismissed", "#718096"),
+}
+
+
+def render_trends(base, pin):
+    from calibration_view import api as calibration_api
+
+    st.markdown('<div class="rules-section" style="margin-top:0">Trends in your grades</div>', unsafe_allow_html=True)
+    try:
+        data = calibration_api(base, pin, "/trends")
+    except ValueError as exc:
+        st.error(str(exc))
+        return
+    cfg = data.get("config") or {}
+    trends = [t for t in data.get("trends") or [] if t.get("status") in ("drafted", "ready", "watching")]
+    st.caption(
+        f"A trend becomes a draft for you when at least {cfg.get('min_grades', 5)} of your grades in {cfg.get('window_days', 30)} days "
+        f"lean the same way against the grader ({int(float(cfg.get('min_share', 0.75)) * 100)}% or more of that area) and no rule or item covers them."
+    )
+    if not trends:
+        st.caption("No trends yet. Every grade with a reason (especially “not my focus”) brings one closer.")
+        return
+    for trend in trends[:12]:
+        label, color = TREND_STATUS.get(trend.get("status"), ("", "#4a5568"))
+        progress = f"{trend.get('n')}/{trend.get('needed')}" if trend.get("status") == "watching" else f"{int(float(trend.get('share') or 0) * 100)}% of {trend.get('comparable')}"
+        text_col, button_col = st.columns([6, 1])
+        text_col.markdown(
+            f'<div class="rule-row"><div class="rule-head"><span class="rule-badge" style="background:{color}">{html.escape(label)}</span>'
+            f'<span class="rule-meta" style="margin-top:0">{html.escape(progress)}'
+            + (f' · draft #{trend["draft_id"]} in Drafts' if trend.get("draft_id") else "")
+            + f'</span></div><div class="rule-text">{html.escape(str(trend.get("summary") or ""))}</div></div>',
+            unsafe_allow_html=True,
+        )
+        if trend.get("status") in ("ready", "watching") and button_col.button("Draft now", key=f"trend_draft_{trend['key']}"):
+            try:
+                result = calibration_api(base, pin, "/trends/draft", {"key": trend["key"]})
+            except ValueError as exc:
+                st.error(str(exc))
+            else:
+                flash(f"Trend sent to ChatGPT as draft #{result.get('draft_id')} · back in Drafts {next_pickup_label()}")
+
+
+def render_calibration_tab(base, pin, guides):
+    from calibration_view import fetch_summary, render_audit, render_calibration_sections
+
+    render_trends(base, pin)
+    summary = None
+    try:
+        summary = fetch_summary(base, pin)
+    except ValueError as exc:
+        st.error(str(exc))
+    if summary:
+        render_calibration_sections(base, pin, summary)
+    with st.expander("Monthly audit"):
+        render_guide(guides, "monthly_audit", "Monthly audit — 20 minutes")
+        if summary:
+            render_audit(base, pin, summary)
+    with st.expander("How to grade"):
+        render_guide(guides, "how_to_grade", "How to grade")
+
+
+# ---------------------------------------------------------------- page
 
 @st.cache_data(ttl=300, show_spinner=False)
 def fetch_guides(base):
     """The monthly-audit and how-to-grade pages, served by the aggregator from
-    the same files as its runbook so this tab never drifts from it."""
+    the same files as its runbook so this page never drifts from it."""
     try:
         response = requests.get(f"{base}/grades/guide", timeout=15)
         if response.status_code != 200:
@@ -540,8 +661,6 @@ def render_guide(guides, key, fallback_title):
 
 
 def render_rules_view(base):
-    from calibration_view import fetch_summary, render_audit, render_calibration_sections
-
     pin = str(st.session_state.get("grader_pin", "")).strip()
     if not pin:
         st.markdown('<div class="empty-state">Open Owner mode and enter the grader PIN to manage rules.</div>', unsafe_allow_html=True)
@@ -550,32 +669,10 @@ def render_rules_view(base):
     if message:
         st.success(message)
     guides = fetch_guides(base)
-    drafts_tab, calibration_tab, audit_tab, grade_tab = st.tabs(["Drafts and rules", "Calibration", "Monthly audit", "How to grade"])
-
+    drafts_tab, rules_tab, calibration_tab = st.tabs(["Drafts", "Rules & Items", "Calibration"])
     with drafts_tab:
-        render_composer(base, pin)
-        include_inactive = st.checkbox("Show inactive and superseded rules", key="rules_include_inactive")
-        try:
-            drafts = api(base, pin, "/drafts?status=pending")["drafts"]
-            rules = api(base, pin, "?include=inactive" if include_inactive else "")["rules"]
-        except ValueError as exc:
-            st.error(str(exc))
-        else:
-            render_drafts(base, pin, drafts)
-            render_rules(base, pin, rules, include_inactive)
-
-    summary = None
-    try:
-        summary = fetch_summary(base, pin)
-    except ValueError as exc:
-        with calibration_tab:
-            st.error(str(exc))
+        render_drafts_tab(base, pin)
+    with rules_tab:
+        render_rules_items_tab(base, pin)
     with calibration_tab:
-        if summary:
-            render_calibration_sections(base, pin, summary)
-    with audit_tab:
-        render_guide(guides, "monthly_audit", "Monthly audit — 20 minutes")
-        if summary:
-            render_audit(base, pin, summary)
-    with grade_tab:
-        render_guide(guides, "how_to_grade", "How to grade")
+        render_calibration_tab(base, pin, guides)

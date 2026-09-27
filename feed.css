@@ -87,7 +87,9 @@ html, body, button, input, textarea, [data-testid="stAppViewContainer"] {
 .edition-label { color:#c3cddd; font-weight:600; }
 .latest-badge { padding:4px 7px; color:#8fbbff; background:#172c48; border:1px solid #29476f; border-radius:3px; font-size:9px; letter-spacing:1px; font-weight:600; }
 .edition-headline { margin-top:10px; color:var(--digest-text); font:600 21px/1.3 var(--font-display); letter-spacing:-.4px; text-wrap:pretty; }
-.latest-edition .edition-headline { font-size:clamp(24px,2.7vw,31px); line-height:1.2; letter-spacing:-.8px; }
+.latest-edition .edition-headline { font-size:clamp(22px,2.3vw,26px); line-height:1.2; letter-spacing:-.6px; }
+.edition-threads { display:flex; flex-wrap:wrap; gap:8px; margin-top:18px; }
+.edition-thread { display:inline-flex; align-items:center; min-height:24px; padding:2px 11px; color:#c6ddff; background:var(--digest-blue-soft); border:1px solid #243f66; border-radius:12px; font-size:12px; font-weight:500; line-height:1.4; }
 .feed-item { position:relative; display:grid; grid-template-columns:30px minmax(0,1fr); gap:14px; padding:16px 24px; border-bottom:1px solid var(--digest-border-soft); transition:background .16s; }
 .feed-item:last-child { border-bottom:0; }
 .feed-item:hover { background:var(--digest-surface-hover); }
@@ -96,7 +98,7 @@ html, body, button, input, textarea, [data-testid="stAppViewContainer"] {
 .feed-copy { min-width:0; }
 .feed-meta { display:flex; align-items:center; flex-wrap:wrap; gap:9px; color:var(--digest-text-muted); font:10px/1.5 var(--font-mono); }
 .feed-worker { color:#a5b4cb; text-transform:uppercase; letter-spacing:.5px; }
-.feed-item-headline { color:var(--digest-text); font-size:20px; font-weight:600; letter-spacing:-.1px; line-height:1.35; }
+.feed-item-headline { color:var(--digest-text); font-size:21px; font-weight:600; letter-spacing:-.1px; line-height:1.35; }
 .feed-text { color:var(--digest-text-secondary); font-size:16px; line-height:1.8; margin:10px 0 15px; white-space:pre-line; width:100%; max-width:none; overflow-wrap:anywhere; }
 .feed-details { min-width:0; }
 .feed-toggle { display:flex; align-items:flex-start; gap:14px; min-height:44px; padding:5px 0 7px; cursor:pointer; list-style:none; }
@@ -174,3 +176,7 @@ html, body, button, input, textarea, [data-testid="stAppViewContainer"] {
 .refine-chips { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
 .refine-chip { font:10px/1 var(--font-mono); color:var(--digest-text-secondary); border:1px solid var(--digest-border); padding:4px 7px; border-radius:4px; }
 .refine-chip.warn { color:#f6ad55; border-color:#c05621; }
+.loop-card-head { display:flex; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:8px; }
+.loop-kind { font:10px/1 var(--font-mono); letter-spacing:1px; text-transform:uppercase; padding:4px 7px; border-radius:4px; border:1px solid; }
+.loop-kind-rule { color:#87b4ff; border-color:#2c4a7a; background:var(--digest-blue-soft); }
+.loop-kind-item { color:#e8c170; border-color:#46391b; background:#241f12; }

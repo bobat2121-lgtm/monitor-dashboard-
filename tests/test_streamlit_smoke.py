@@ -47,6 +47,10 @@ def fake_get(url, **_kwargs):
                         "posted_at": "2026-09-04T16:13:31Z",
                         "trigger_label": "12pm ET",
                         "headline": "Physical AI deployments advance",
+                        "brief": {
+                            "threads": [{"label": "Drone <buying>", "ranks": [1, 2]}, {"label": "Legacy", "ranks": [2]}],
+                            "source": "reviewer",
+                        },
                         "items": [
                             {
                                 "rank": 1,
@@ -61,7 +65,7 @@ def fake_get(url, **_kwargs):
                                 "text": "A legacy digest item still renders without a headline.",
                                 "url": "https://example.com/legacy",
                                 "worker": "news-monitor",
-                                "value": "Tier 2",
+                                "value": "medium",
                             },
                         ],
                     }
@@ -86,6 +90,9 @@ class StreamlitStartupTests(unittest.TestCase):
             self.assertIn("Air Force &lt;accelerates&gt; its lower-cost MQ-9 successor", rendered)
             self.assertIn("The service plans at least 180 unmanned aircraft.", rendered)
             self.assertIn("A legacy digest item still renders without a headline.", rendered)
+            # The edition's topic tags render under the headline, escaped, without item numbers.
+            self.assertIn('<div class="edition-threads"><span class="edition-thread">Drone &lt;buying&gt;</span><span class="edition-thread">Legacy</span></div>', rendered)
+            self.assertIn('<span class="value-badge level-medium">Medium</span>', rendered)
 
             search = next(field for field in app.text_input if field.label == "Search published stories")
             search.set_value("legacy").run()
@@ -93,6 +100,7 @@ class StreamlitStartupTests(unittest.TestCase):
             filtered = "\n".join(markdown.value for markdown in app.markdown)
             self.assertIn("1 search result", filtered)
             self.assertIn("A legacy digest item still renders without a headline.", filtered)
+            self.assertNotIn('class="edition-thread"', filtered, "search results leave out the edition brief")
             self.assertNotIn("Air Force &lt;accelerates&gt;", filtered)
             search.set_value("no-such-story-xxxxx").run()
             self.assertIn("No matching stories.", "\n".join(m.value for m in app.markdown))

@@ -149,7 +149,7 @@ def render_items(items) -> str:
             metadata.append(f'<span class="feed-worker">{html.escape(worker.replace("-", " ").title())}</span>')
         meta_html = '<span>·</span>'.join(metadata)
 
-        badge = f'<span class="value-badge level-{level}">{level}</span>' if level else ""
+        badge = f'<span class="value-badge level-{level}">{level.capitalize()}</span>' if level else ""
         headline_html = (
             f'<div class="feed-item-headline">{html.escape(item_headline)}</div>'
             if item_headline
@@ -199,8 +199,22 @@ def edition_header(post, latest=False) -> str:
         f'<span>·</span><span>{item_count} item{"s" if item_count != 1 else ""}</span>'
         "</div>"
         f"{headline_html}"
+        f"{edition_brief(post.get('brief'))}"
         "</div>"
     )
+
+
+def edition_brief(brief) -> str:
+    """Topic tags under the headline: what unfolded across the edition. The
+    Worker builds them from the items when the reviewer's are missing."""
+    if not isinstance(brief, dict):
+        return ""
+    tags = []
+    for thread in brief.get("threads") or []:
+        label = str(thread.get("label") or "").strip() if isinstance(thread, dict) else ""
+        if label:
+            tags.append(f'<span class="edition-thread">{html.escape(label)}</span>')
+    return f'<div class="edition-threads">{"".join(tags)}</div>' if tags else ""
 
 
 def daily_edition(post, latest=False, grading=False) -> str:
@@ -401,7 +415,9 @@ def search_editions(daily, query):
                 ("headline", "text", "worker", "url", "value")).casefold() for term in terms)
         ]
         if items:
-            matches.append({**post, "items": items})
+            # A search shows only the matching items, so the edition brief (whose
+            # threads cite the full edition) is left out.
+            matches.append({**post, "items": items, "brief": None})
     return matches
 
 
