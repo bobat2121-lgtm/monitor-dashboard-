@@ -205,26 +205,16 @@ def edition_header(post, latest=False) -> str:
 
 
 def edition_brief(brief) -> str:
-    """The banner below the headline: what unfolded across the edition, and
-    the threads that tie items together (the Worker composes one when the
-    reviewer's is missing)."""
+    """Topic tags under the headline: what unfolded across the edition. The
+    Worker builds them from the items when the reviewer's are missing."""
     if not isinstance(brief, dict):
         return ""
-    dek = str(brief.get("dek") or "").strip()
-    threads = []
+    tags = []
     for thread in brief.get("threads") or []:
-        if not isinstance(thread, dict):
-            continue
-        label = str(thread.get("label") or "").strip()
-        ranks = [str(r).zfill(2) for r in thread.get("ranks") or [] if isinstance(r, int)]
-        if label and ranks:
-            threads.append(
-                f'<span class="edition-thread">{html.escape(label)}'
-                f'<span class="thread-ranks">{" ".join(ranks)}</span></span>'
-            )
-    dek_html = f'<div class="edition-dek">{html.escape(dek)}</div>' if dek else ""
-    threads_html = f'<div class="edition-threads">{"".join(threads)}</div>' if threads else ""
-    return dek_html + threads_html
+        label = str(thread.get("label") or "").strip() if isinstance(thread, dict) else ""
+        if label:
+            tags.append(f'<span class="edition-thread">{html.escape(label)}</span>')
+    return f'<div class="edition-threads">{"".join(tags)}</div>' if tags else ""
 
 
 def daily_edition(post, latest=False, grading=False) -> str:

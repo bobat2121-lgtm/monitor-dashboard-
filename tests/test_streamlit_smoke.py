@@ -48,8 +48,7 @@ def fake_get(url, **_kwargs):
                         "trigger_label": "12pm ET",
                         "headline": "Physical AI deployments advance",
                         "brief": {
-                            "dek": "The Air Force <moves> on a cheaper MQ-9 successor as legacy items stay readable.",
-                            "threads": [{"label": "Drone buying", "ranks": [1, 2]}],
+                            "threads": [{"label": "Drone <buying>", "ranks": [1, 2]}, {"label": "Legacy", "ranks": [2]}],
                             "source": "reviewer",
                         },
                         "items": [
@@ -91,9 +90,8 @@ class StreamlitStartupTests(unittest.TestCase):
             self.assertIn("Air Force &lt;accelerates&gt; its lower-cost MQ-9 successor", rendered)
             self.assertIn("The service plans at least 180 unmanned aircraft.", rendered)
             self.assertIn("A legacy digest item still renders without a headline.", rendered)
-            # The edition brief renders under the headline, escaped, with its threads.
-            self.assertIn('<div class="edition-dek">The Air Force &lt;moves&gt; on a cheaper MQ-9 successor', rendered)
-            self.assertIn('<span class="edition-thread">Drone buying<span class="thread-ranks">01 02</span></span>', rendered)
+            # The edition's topic tags render under the headline, escaped, without item numbers.
+            self.assertIn('<div class="edition-threads"><span class="edition-thread">Drone &lt;buying&gt;</span><span class="edition-thread">Legacy</span></div>', rendered)
             self.assertIn('<span class="value-badge level-medium">Medium</span>', rendered)
 
             search = next(field for field in app.text_input if field.label == "Search published stories")
