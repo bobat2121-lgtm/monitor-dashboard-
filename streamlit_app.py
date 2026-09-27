@@ -37,7 +37,9 @@ from dashboard_utils import (
 
 st.set_page_config(
     page_title="The Physical AI Universe",
-    page_icon="◈",
+    # a self-driving semi (side view, lidar on the cab) as 16x16 pixel art; a bare "◈" is not
+    # an emoji to Streamlit, so it never showed as a favicon
+    page_icon=str(Path(__file__).resolve().parent / "assets" / "favicon.png"),
     layout="wide",
     initial_sidebar_state="collapsed",
 )
