@@ -22,6 +22,16 @@ class PipelineStatus:
     detail: str = ""
 
 
+# An item's value is its importance relative to the other items in its edition:
+# high, medium or low, with no quota. Older editions wrote "Tier 1-3" (mapped
+# onto the same levels) or a takeaway sentence (no chip).
+VALUE_LEVELS = {"high": "high", "medium": "medium", "low": "low", "tier 1": "high", "tier 2": "medium", "tier 3": "low"}
+
+
+def value_level(value):
+    return VALUE_LEVELS.get(" ".join(str(value or "").lower().split()))
+
+
 def parse_time(value: Any) -> datetime:
     """Parse ISO, RFC 2822/RSS, date-only, datetime, or epoch timestamps."""
     if isinstance(value, datetime):

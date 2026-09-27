@@ -32,6 +32,7 @@ from dashboard_utils import (
     rejected_time,
     relative_time,
     sort_rejected,
+    value_level,
 )
 
 
@@ -136,7 +137,7 @@ def render_items(items) -> str:
         rank = html.escape(str(item.get("rank", "–")).zfill(2))
         text = html.escape(str(item.get("text", "")))
         item_headline = str(item.get("headline") or "").strip()
-        value = item.get("value")
+        level = value_level(item.get("value"))
         url = item.get("url")
         worker = str(item.get("worker") or "").strip()
         domain = domain_of(str(url)) if url else ""
@@ -148,11 +149,7 @@ def render_items(items) -> str:
             metadata.append(f'<span class="feed-worker">{html.escape(worker.replace("-", " ").title())}</span>')
         meta_html = '<span>·</span>'.join(metadata)
 
-        badge = (
-            f'<span class="value-badge">{html.escape(str(value))}</span>'
-            if value
-            else ""
-        )
+        badge = f'<span class="value-badge level-{level}">{level}</span>' if level else ""
         headline_html = (
             f'<div class="feed-item-headline">{html.escape(item_headline)}</div>'
             if item_headline
@@ -165,7 +162,7 @@ def render_items(items) -> str:
             else '<span class="feed-meta">No source link captured</span>'
         )
 
-        item_class = "feed-item has-value" if value else "feed-item"
+        item_class = "feed-item has-value" if level else "feed-item"
         rows.append(
             f'<article class="{item_class}">'
             f'<div class="rank-marker">{rank}</div>'
