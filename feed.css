@@ -88,7 +88,7 @@ html, body, button, input, textarea, [data-testid="stAppViewContainer"] {
 .latest-badge { padding:4px 7px; color:#8fbbff; background:#172c48; border:1px solid #29476f; border-radius:3px; font-size:9px; letter-spacing:1px; font-weight:600; }
 .edition-headline { margin-top:10px; color:var(--digest-text); font:600 21px/1.3 var(--font-display); letter-spacing:-.4px; text-wrap:pretty; }
 .latest-edition .edition-headline { font-size:clamp(22px,2.3vw,26px); line-height:1.2; letter-spacing:-.6px; }
-.edition-threads { display:flex; flex-wrap:wrap; gap:8px; margin-top:12px; }
+.edition-threads { display:flex; flex-wrap:wrap; gap:8px; margin-top:18px; }
 .edition-thread { display:inline-flex; align-items:center; min-height:24px; padding:2px 11px; color:#c6ddff; background:var(--digest-blue-soft); border:1px solid #243f66; border-radius:12px; font-size:12px; font-weight:500; line-height:1.4; }
 .feed-item { position:relative; display:grid; grid-template-columns:30px minmax(0,1fr); gap:14px; padding:16px 24px; border-bottom:1px solid var(--digest-border-soft); transition:background .16s; }
 .feed-item:last-child { border-bottom:0; }
