@@ -1,7 +1,7 @@
 import unittest
 from datetime import datetime, timezone
 
-from dashboard_utils import MIN_TIME, parse_time, pipeline_status, rejected_time, sort_rejected
+from dashboard_utils import MIN_TIME, parse_time, pipeline_status, rejected_time, sort_rejected, value_level
 
 
 NOW = datetime(2026, 9, 4, 12, 0, tzinfo=timezone.utc)
@@ -99,6 +99,16 @@ class PipelineStatusTests(unittest.TestCase):
             "staleness": {"lastPost": "2026-09-04T10:00:00Z"},
         }
         self.assertEqual(pipeline_status(health, now=NOW).level, "amber")
+
+
+class ValueLevelTests(unittest.TestCase):
+    def test_levels_and_legacy_tiers_map_to_high_medium_low(self):
+        self.assertEqual([value_level(v) for v in ["high", "Medium", " LOW ", "Tier 1", "tier  2", "Tier 3"]],
+                         ["high", "medium", "low", "high", "medium", "low"])
+
+    def test_sentences_and_blanks_get_no_chip(self):
+        for value in ["Mass acquisition expands the British Army's drone-pilot training pipeline.", "", None, "Tier 4"]:
+            self.assertIsNone(value_level(value))
 
 
 if __name__ == "__main__":

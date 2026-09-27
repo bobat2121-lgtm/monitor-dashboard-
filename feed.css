@@ -107,6 +107,8 @@ html, body, button, input, textarea, [data-testid="stAppViewContainer"] {
 .feed-summary-label { color:var(--digest-text-secondary); font-size:14px; }
 .feed-toggle .feed-item-headline { min-width:0; margin:0; overflow-wrap:anywhere; }
 .value-badge { display:inline-flex; align-items:center; min-height:22px; padding:2px 7px; color:var(--digest-orange); background:var(--digest-orange-soft); border:1px solid #4b3020; border-radius:3px; font:11px/1.5 var(--font-mono); letter-spacing:.3px; }
+.value-badge.level-medium { color:#e8c170; background:#241f12; border-color:#46391b; }
+.value-badge.level-low { color:var(--digest-text-muted); background:var(--digest-surface-raised); border-color:var(--digest-border); }
 .source-link { display:inline-flex; align-items:center; min-height:30px; color:#87b4ff; font:12px/1.4 var(--font-mono); text-decoration:none !important; }
 .source-link:hover { color:#c6ddff; text-decoration:underline !important; }
 .empty-state { padding:4rem 1.5rem; text-align:center; border:1px dashed var(--digest-border); border-radius:8px; color:var(--digest-text-muted); font-size:14px; line-height:1.8; }
