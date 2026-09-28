@@ -270,15 +270,30 @@ def recent_label(draft) -> str:
     return f"Published {target}"
 
 
+def recent_text(draft, limit: int = 240) -> str:
+    """What an undo would bring back or take away: the published text, or the
+    version that was discarded."""
+    proposal = draft.get("proposal") or {}
+    if draft.get("status") == "rejected":
+        text = proposal.get("text") or draft.get("text")
+    else:
+        text = draft.get("text") or proposal.get("text")
+    text = " ".join(str(text or "").split())
+    return text if len(text) <= limit else text[: limit - 1].rsplit(" ", 1)[0] + "…"
+
+
 def render_recent(base, pin, recent):
     if not recent:
         return
     with st.expander(f"Just decided · {len(recent)} · undo within 24 h"):
         for draft in recent:
             label, button = st.columns([5, 1])
+            text = recent_text(draft)
             label.markdown(
-                f'<div class="rule-meta" style="margin-top:8px">{html.escape(recent_label(draft))} · '
-                f'{html.escape(str(draft.get("decided_at") or "")[11:16])} UTC</div>',
+                '<div class="loop-card-head" style="margin-top:6px">' + kind_chip(draft.get("kind"))
+                + f'<span class="rule-meta" style="margin-top:0">{html.escape(recent_label(draft))} · '
+                f'{html.escape(str(draft.get("decided_at") or "")[11:16])} UTC</span></div>'
+                + (f'<div class="recent-text">{html.escape(text)}</div>' if text else ""),
                 unsafe_allow_html=True,
             )
             if button.button("Undo", key=f"undo_{draft['id']}"):
@@ -325,6 +340,7 @@ def applies_html(proposal, target=None, kind="rule") -> str:
     return '<div class="refine-chips">' + "".join(chips) + "</div>"
 
 
+@st.fragment
 def render_card(base, pin, draft, status):
     """One draft: ChatGPT's version in an editable box, and three buttons."""
     draft_id = draft.get("id")
@@ -396,6 +412,7 @@ def render_card(base, pin, draft, status):
                  lambda r: f"Draft #{draft_id} discarded{f'; {target} unchanged' if target else ''} · undo within 24 h")
 
 
+@st.fragment
 def render_drop_card(base, pin, draft):
     """ChatGPT proposes dropping instead of rewriting; the owner decides."""
     draft_id = draft.get("id")
@@ -446,6 +463,7 @@ def render_waiting_row(base, pin, draft, pinned: bool):
             _act(base, pin, f"/drafts/{draft_id}/reject", {}, lambda r: f"Draft #{draft_id} withdrawn · undo within 24 h")
 
 
+@st.fragment
 def render_signature_only(base, pin, drafts):
     """Signature passes arrive in bulk; list them compactly with one approval."""
     with st.expander(f"Signature-only updates · {len(drafts)} (text unchanged, no score bounds)"):
