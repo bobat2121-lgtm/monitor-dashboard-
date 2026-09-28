@@ -14,6 +14,12 @@ from zoneinfo import ZoneInfo
 import requests
 import streamlit as st
 
+import module_refresh
+
+# Streamlit Cloud reruns this file after a pull but keeps imported modules
+# cached; reload any local module whose file changed before importing from it.
+module_refresh.refresh()
+
 from universe_view import render_universe
 from rules_view import render_rules_view
 from grading_ui import (
@@ -35,6 +41,7 @@ from dashboard_utils import (
     value_level,
 )
 
+module_refresh.stamp()
 
 st.set_page_config(
     page_title="The Physical AI Universe",
