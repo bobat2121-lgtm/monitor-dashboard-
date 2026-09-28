@@ -372,9 +372,17 @@ class RulesTabTests(unittest.TestCase):
         self.assertTrue(self.posts()[-1][1].endswith("/rules/drafts/42/reject"))
 
     def test_anything_decided_in_the_last_day_can_be_undone(self):
-        self.recent = [{"id": 37, "status": "approved", "precedent_rule_id": "R-0038", "decided_at": "2026-09-27T22:31:14.844Z", "undo": {"type": "superseded"}, "undo_available": True},
-                       {"id": 12, "status": "rejected", "decided_at": "2026-09-27T20:00:00.000Z", "undo": {"type": "rejected"}, "undo_available": True}]
+        self.recent = [{"id": 37, "status": "approved", "precedent_rule_id": "R-0038", "decided_at": "2026-09-27T22:31:14.844Z", "undo": {"type": "superseded"}, "undo_available": True,
+                        "kind": "item", "text": "Routine municipal <police-drone> renewals stay borderline."},
+                       {"id": 12, "status": "rejected", "decided_at": "2026-09-27T20:00:00.000Z", "undo": {"type": "rejected"}, "undo_available": True,
+                        "kind": "rule", "text": "my rough words", "proposal": {"text": "The discarded rewrite " + "x" * 300}}]
         app = self.start()
+        rendered = self.rendered(app)
+        # Each row shows its label and the text an undo would bring back.
+        self.assertIn('loop-kind loop-kind-item', rendered)
+        self.assertIn('<div class="recent-text">Routine municipal &lt;police-drone&gt; renewals stay borderline.</div>', rendered)
+        self.assertIn("The discarded rewrite", rendered, "a discard shows the version that was discarded")
+        self.assertNotIn("x" * 260, rendered, "long texts are shortened")
         self.assertIn("Just decided · 2 · undo within 24 h", "\n".join(e.label for e in app.expander))
         rendered = self.rendered(app)
         self.assertIn("Published R-0038", rendered); self.assertIn("Discarded draft #12", rendered)
