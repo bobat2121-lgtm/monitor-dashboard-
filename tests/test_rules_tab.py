@@ -282,7 +282,10 @@ class RulesTabTests(unittest.TestCase):
         self.drafts = [proposed(8, JUMBLE, REWRITE, effect={"min_score": 70}), proposed(5, "x" * 30, "y" * 30, target="R-0001")]
         app = self.start()
         self.assertEqual(app.radio("card_kind_8").value, "Rule", "starts on the draft's own label")
-        self.assertFalse(any(r.key == "card_kind_5" for r in app.radio), "a revision keeps the kind it revises")
+        self.assertEqual(app.radio("card_kind_5").value, "Rule", "revisions can be relabeled too")
+        app.radio("card_kind_5").set_value("Item").run()
+        self.assertTrue(any("retires R-0001 and creates a new item" in c.value for c in app.caption))
+        app.radio("card_kind_5").set_value("Rule").run()
         app.radio("card_kind_8").set_value("Item").run()
         rendered = self.rendered(app)
         self.assertIn('loop-kind loop-kind-item', rendered)
@@ -344,10 +347,12 @@ class RulesTabTests(unittest.TestCase):
         self.assertIn("Waiting for ChatGPT's first version · 4", labels)
         self.assertTrue(any(t.key == "card_text_23" for t in app.text_area), "a rewrite with score bounds gets its own card")
         self.assertFalse(any(t.key == "card_text_21" for t in app.text_area), "signature-only drafts are listed compactly")
+        app.multiselect("signature_only_flip").set_value([22]).run()
         app.button("approve_signature_only").click().run()
         approvals = [c for c in self.posts() if c[1].endswith("/approve")]
         self.assertEqual([c[1].split("/")[-2] for c in approvals], ["21", "22"])
-        self.assertTrue(all(c[2] == {} for c in approvals), "an empty body publishes the proposal as written")
+        self.assertEqual(approvals[0][2], {}, "an empty body publishes the proposal as written")
+        self.assertEqual(approvals[1][2], {"kind": "item"}, "a picked one publishes as the other kind")
 
     def test_a_proposed_drop_is_signed_off_as_a_drop_never_as_an_approval(self):
         drop = proposed(41, "A new drone unveiling is not a digest item.", None, target="R-0034", run_id="owner-revision")
