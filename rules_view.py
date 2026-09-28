@@ -285,10 +285,18 @@ def render_recent(base, pin, recent):
                 _act(base, pin, f"/drafts/{draft['id']}/undo", {}, lambda r: f"Undone · draft #{r.get('draft_id')} is back in Drafts")
 
 
-def card_header(draft, status) -> str:
+# "Publish as" on a card: the label the draft publishes or goes back with.
+KIND_CHOICES = {"Rule": "rule", "Item": "item"}
+
+
+def stored_kind(draft) -> str:
+    return "item" if draft.get("kind") in ("item", "case") else "rule"
+
+
+def card_header(draft, status, kind=None) -> str:
     return (
         '<div class="loop-card-head">'
-        + kind_chip(draft.get("kind"))
+        + kind_chip(kind or draft.get("kind"))
         + f'<span class="rule-meta" style="margin-top:0">Draft #{draft.get("id")} · {html.escape(draft_origin(draft))}'
         + f' · round {draft.get("refine_round") or 0} · {html.escape(status)}</span></div>'
     )
@@ -322,10 +330,17 @@ def render_card(base, pin, draft, status):
     draft_id = draft.get("id")
     proposal = draft.get("proposal") or {}
     target = draft.get("target_rule_id")
-    kind = draft.get("kind") or "rule"
+    stored = stored_kind(draft)
+    # The owner can relabel a new draft; a revision keeps the kind it revises.
+    kind_key = f"card_kind_{draft_id}"
+    kind = stored if target else KIND_CHOICES.get(st.session_state.get(kind_key), stored)
     base_text = str(proposal.get("text") or draft.get("text") or "")
     with st.container(border=True):
-        st.markdown(card_header(draft, status), unsafe_allow_html=True)
+        st.markdown(card_header(draft, status, kind), unsafe_allow_html=True)
+        if not target:
+            st.radio("Publish as", list(KIND_CHOICES), index=list(KIND_CHOICES.values()).index(stored), horizontal=True, key=kind_key,
+                     help="Starts on the draft's own label. Publish and Send back use the one you pick; "
+                          "an item is a worked example (no score floor or ceiling).")
         text = st.text_area("ChatGPT's version (edit it, then publish or send back)" if proposal.get("text") else "Your draft",
                             value=base_text, key=f"card_text_{draft_id}", height=110)
         st.markdown(
@@ -347,11 +362,13 @@ def render_card(base, pin, draft, status):
             signature = st.text_input(SIGNATURE_LABEL, value=signature_value(proposal.get("signature") or draft.get("signature")), key=f"card_sig_{draft_id}")
             if kind != "item":
                 floor, ceiling = effect_inputs(f"card_{draft_id}", proposal.get("effect"))
-                if proposal.get("supersedes") and not target:
+                if proposal.get("supersedes") and not target and proposal["supersedes"].startswith("R-"):
                     replace = st.checkbox(f"Replace {proposal['supersedes']} with this rule (history kept)", key=f"card_replace_{draft_id}")
         publish, send, discard = st.columns(3)
         if publish.button("Publish", type="primary", key=f"publish_{draft_id}"):
             payload = {"text": text.strip()}
+            if kind != stored:
+                payload["kind"] = kind
             if details:
                 payload["signature"] = parse_signature(signature)
                 if kind != "item":
@@ -361,16 +378,17 @@ def render_card(base, pin, draft, status):
             _act(base, pin, f"/drafts/{draft_id}/approve", payload, approved_message)
         if send.button("Send back to ChatGPT", key=f"sendback_{draft_id}"):
             edited = text.strip()
-            payload = {}
+            payload = {"kind": kind} if kind != stored else {}
             if normalized(edited) != normalized(base_text):
                 payload["text"] = edited
             if note.strip():
                 payload["feedback"] = note.strip()
             if not payload:
-                st.info("Edit the text or add a note, so ChatGPT knows what to change.")
+                st.info("Edit the text, add a note or change Publish as, so ChatGPT knows what to change.")
             else:
+                relabel = f" as {'an item' if kind == 'item' else 'a rule'}" if kind != stored else ""
                 _act(base, pin, f"/drafts/{draft_id}/refine", payload,
-                     lambda r: f"Draft #{draft_id} sent back{' with your edit' if r.get('edit') else ''} · pinned at the top until ChatGPT returns it {next_pickup_label()}")
+                     lambda r: f"Draft #{draft_id} sent back{relabel}{' with your edit' if r.get('edit') else ''} · pinned at the top until ChatGPT returns it {next_pickup_label()}")
         if discard.button("Discard", key=f"discard_{draft_id}"):
             _act(base, pin, f"/drafts/{draft_id}/reject", {},
                  lambda r: f"Draft #{draft_id} discarded{f'; {target} unchanged' if target else ''} · undo within 24 h")

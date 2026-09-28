@@ -139,7 +139,8 @@ class RulesTabTests(unittest.TestCase):
         body = kwargs.get("json") or {}
         self.calls.append(("POST", url, body))
         if url.endswith("/approve"):
-            return StubResponse({"ok": True, "kind": "rule", "rule_id": "R-0003", "distilled": 1, "precedent_id": 9, "superseded": body.get("supersedes")})
+            kind = body.get("kind", "rule")
+            return StubResponse({"ok": True, "kind": kind, "rule_id": "I-0002" if kind == "item" else "R-0003", "distilled": 1, "precedent_id": 9, "superseded": body.get("supersedes")})
         if url.endswith("/rules/drafts"):
             return StubResponse({"ok": True, "draft_id": 12, "kind": body.get("kind"), "duplicate": False, "refine_status": "queued"})
         if url.endswith("/rules/refine-missing"):
@@ -277,12 +278,34 @@ class RulesTabTests(unittest.TestCase):
         self.assertEqual(payload["effect"], {"min_score": 70})
         self.assertEqual(payload["supersedes"], "R-0001")
 
+    def test_publish_as_relabels_a_draft_rule_or_item(self):
+        self.drafts = [proposed(8, JUMBLE, REWRITE, effect={"min_score": 70}), proposed(5, "x" * 30, "y" * 30, target="R-0001")]
+        app = self.start()
+        self.assertEqual(app.radio("card_kind_8").value, "Rule", "starts on the draft's own label")
+        self.assertFalse(any(r.key == "card_kind_5" for r in app.radio), "a revision keeps the kind it revises")
+        app.radio("card_kind_8").set_value("Item").run()
+        rendered = self.rendered(app)
+        self.assertIn('loop-kind loop-kind-item', rendered)
+        self.assertNotIn("score floor 70", rendered, "an item carries no floor or ceiling")
+        app.button("publish_8").click().run()
+        self.assertEqual(self.posts()[-1][2], {"text": REWRITE, "kind": "item"})
+        self.assertTrue(any("Published item I-0002" in s.value for s in app.success))
+
+    def test_send_back_as_the_other_kind(self):
+        self.drafts = [proposed(8, JUMBLE, REWRITE, kind="item")]
+        app = self.start()
+        self.assertEqual(app.radio("card_kind_8").value, "Item")
+        app.radio("card_kind_8").set_value("Rule").run()
+        app.button("sendback_8").click().run()
+        self.assertEqual(self.posts()[-1][2], {"kind": "rule"}, "a relabel alone is reason enough to send it back")
+        self.assertTrue(any("Draft #8 sent back as a rule" in s.value for s in app.success))
+
     def test_send_back_carries_the_edit_and_the_card_stays_pinned(self):
         self.drafts = [proposed(8, JUMBLE, REWRITE)]
         app = self.start()
         app.button("sendback_8").click().run()
         self.assertEqual(self.posts(), [], "nothing changed, nothing sent")
-        self.assertTrue(any("Edit the text or add a note" in i.value for i in app.info))
+        self.assertTrue(any("Edit the text, add a note or change Publish as" in i.value for i in app.info))
         edited = REWRITE + " Only uncrewed maritime and air programs."
         app.text_area("card_text_8").set_value(edited)
         app.text_input("card_note_8").set_value("Keep my maritime/air boundary.")
