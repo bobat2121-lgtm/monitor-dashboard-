@@ -331,16 +331,18 @@ def render_card(base, pin, draft, status):
     proposal = draft.get("proposal") or {}
     target = draft.get("target_rule_id")
     stored = stored_kind(draft)
-    # The owner can relabel a new draft; a revision keeps the kind it revises.
+    # The owner can relabel any draft; a relabeled revision replaces what it revises.
     kind_key = f"card_kind_{draft_id}"
-    kind = stored if target else KIND_CHOICES.get(st.session_state.get(kind_key), stored)
+    kind = KIND_CHOICES.get(st.session_state.get(kind_key), stored)
     base_text = str(proposal.get("text") or draft.get("text") or "")
     with st.container(border=True):
         st.markdown(card_header(draft, status, kind), unsafe_allow_html=True)
-        if not target:
-            st.radio("Publish as", list(KIND_CHOICES), index=list(KIND_CHOICES.values()).index(stored), horizontal=True, key=kind_key,
-                     help="Starts on the draft's own label. Publish and Send back use the one you pick; "
-                          "an item is a worked example (no score floor or ceiling).")
+        st.radio("Publish as", list(KIND_CHOICES), index=list(KIND_CHOICES.values()).index(stored), horizontal=True, key=kind_key,
+                 help="Starts on the draft's own label. Publish and Send back use the one you pick; "
+                      "an item is a worked example (no score floor or ceiling).")
+        if target and kind != stored:
+            st.caption(f"Publishing as {'an item' if kind == 'item' else 'a rule'} retires {target} and creates a new "
+                       f"{'item' if kind == 'item' else 'rule'} in its place · undo within 24 h")
         text = st.text_area("ChatGPT's version (edit it, then publish or send back)" if proposal.get("text") else "Your draft",
                             value=base_text, key=f"card_text_{draft_id}", height=110)
         st.markdown(
@@ -458,11 +460,17 @@ def render_signature_only(base, pin, drafts):
             ) + "</div>",
             unsafe_allow_html=True,
         )
+        other = {d["id"]: "rule" if stored_kind(d) == "item" else "item" for d in drafts}
+        flip = st.multiselect(
+            "Publish any of these as the other kind", [d["id"] for d in drafts], key="signature_only_flip",
+            format_func=lambda i: f"{next((d.get('target_rule_id') for d in drafts if d['id'] == i), i)} → {other.get(i, 'item').capitalize()}",
+            help="Each one you pick publishes as a new rule or item that replaces the old one (undo within 24 h).",
+        )
         if st.button(f"Publish all {len(drafts)} signature updates", type="primary", key="approve_signature_only"):
             approved, errors = 0, []
             for draft in drafts:
                 try:
-                    api(base, pin, f"/drafts/{draft['id']}/approve", {}, method="POST")
+                    api(base, pin, f"/drafts/{draft['id']}/approve", {"kind": other[draft["id"]]} if draft["id"] in flip else {}, method="POST")
                     approved += 1
                 except ValueError as exc:
                     errors.append(f"#{draft['id']}: {exc}")
