@@ -271,13 +271,9 @@ def recent_label(draft) -> str:
 
 
 def recent_text(draft, limit: int = 240) -> str:
-    """What an undo would bring back or take away: the published text, or the
-    version that was discarded."""
-    proposal = draft.get("proposal") or {}
-    if draft.get("status") == "rejected":
-        text = proposal.get("text") or draft.get("text")
-    else:
-        text = draft.get("text") or proposal.get("text")
+    """The words the owner sent to ChatGPT for this draft, so each undo row
+    says which request it is."""
+    text = draft.get("raw_text") or draft.get("text") or (draft.get("proposal") or {}).get("text")
     text = " ".join(str(text or "").split())
     return text if len(text) <= limit else text[: limit - 1].rsplit(" ", 1)[0] + "…"
 
@@ -293,7 +289,7 @@ def render_recent(base, pin, recent):
                 '<div class="loop-card-head" style="margin-top:6px">' + kind_chip(draft.get("kind"))
                 + f'<span class="rule-meta" style="margin-top:0">{html.escape(recent_label(draft))} · '
                 f'{html.escape(str(draft.get("decided_at") or "")[11:16])} UTC</span></div>'
-                + (f'<div class="recent-text">{html.escape(text)}</div>' if text else ""),
+                + (f'<div class="recent-text">You sent: {html.escape(text)}</div>' if text else ""),
                 unsafe_allow_html=True,
             )
             if button.button("Undo", key=f"undo_{draft['id']}"):
