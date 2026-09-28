@@ -131,6 +131,35 @@ def item_rank_key(item):
         return 10_000
 
 
+# Theme colours for tags, the theme bar and item labels. No blue, so nothing
+# melts into the blue header; a colour already used in a row goes to the next
+# unused palette colour.
+THEME_COLORS = {
+    "Defense": "#b692f6", "Drones": "#f38ba8", "Autonomy": "#7ee787", "Space": "#4fd1c5",
+    "Aviation": "#c3e88d", "AI infra": "#f6c177", "Public safety": "#ff8a80",
+    "Automation": "#ffab70", "Humanoids": "#ffd166",
+}
+TAG_PALETTE = ["#b692f6", "#4fd1c5", "#f6c177", "#f38ba8", "#7ee787", "#c3e88d", "#ffab70", "#ffd166"]
+
+
+def rgba(hex_color: str, alpha: float) -> str:
+    h = hex_color.lstrip("#")
+    return f"rgba({int(h[0:2], 16)},{int(h[2:4], 16)},{int(h[4:6], 16)},{alpha})"
+
+
+def pick_colors(themes) -> list[str]:
+    """One colour per entry: the theme's own colour unless already used here,
+    else the next unused palette colour, so neighbouring tags differ."""
+    used, out = set(), []
+    for theme in themes:
+        color = THEME_COLORS.get(str(theme or ""))
+        if not color or color in used:
+            color = next((c for c in TAG_PALETTE if c not in used), TAG_PALETTE[len(out) % len(TAG_PALETTE)])
+        used.add(color)
+        out.append(color)
+    return out
+
+
 def render_items(items) -> str:
     rows = []
     for item in sorted(items or [], key=item_rank_key):
@@ -148,6 +177,10 @@ def render_items(items) -> str:
         elif worker:
             metadata.append(f'<span class="feed-worker">{html.escape(worker.replace("-", " ").title())}</span>')
         meta_html = '<span>·</span>'.join(metadata)
+        theme = str(item.get("theme") or "").strip()
+        if theme:
+            color = THEME_COLORS.get(theme, TAG_PALETTE[0])
+            meta_html += f'<span class="feed-theme"><i style="background:{color}"></i>{html.escape(theme)}</span>'
 
         badge = f'<span class="value-badge level-{level}">{level.capitalize()}</span>' if level else ""
         headline_html = (
@@ -179,6 +212,35 @@ def render_items(items) -> str:
     return "".join(rows)
 
 
+def edition_stats(post) -> str:
+    """The latest edition's panel: counts, then items per theme as a bar."""
+    items = post.get("items") or []
+    levels = [value_level(item.get("value")) for item in items]
+    reviewed = post.get("reviewed")
+    tiles = [
+        ("ITEMS", len(items), ""),
+        ("REVIEWED", reviewed if isinstance(reviewed, int) else "—", ""),
+        ("HIGH", levels.count("high"), " stat-high"),
+        ("MEDIUM", levels.count("medium"), " stat-medium"),
+    ]
+    tiles_html = "".join(
+        f'<div class="stat{cls}"><div class="stat-n">{html.escape(str(n))}</div><div class="stat-l">{name}</div></div>'
+        for name, n, cls in tiles
+    )
+    themes = [
+        t for t in post.get("themes") or []
+        if isinstance(t, dict) and str(t.get("label") or "").strip() and isinstance(t.get("count"), int) and t["count"] > 0
+    ]
+    colors = pick_colors(t["label"] for t in themes)
+    bar = "".join(f'<span style="flex-grow:{t["count"]};background:{c}"></span>' for t, c in zip(themes, colors))
+    legend = "".join(
+        f'<span><i style="background:{c}"></i>{html.escape(str(t["label"]).upper())} {t["count"]}</span>'
+        for t, c in zip(themes, colors)
+    )
+    themes_html = f'<div class="theme-bar">{bar}</div><div class="theme-legend">{legend}</div>' if themes else ""
+    return f'<div class="edition-stats"><div class="stat-grid">{tiles_html}</div>{themes_html}</div>'
+
+
 def edition_header(post, latest=False) -> str:
     label = str(post.get("trigger_label") or "Digest")
     posted_at = str(post.get("posted_at") or "")
@@ -190,8 +252,7 @@ def edition_header(post, latest=False) -> str:
         if headline
         else ""
     )
-    return (
-        '<div class="edition-head">'
+    main = (
         '<div class="edition-kicker">'
         f'{latest_html}<span class="edition-label">{html.escape(label)}</span>'
         f'<span>·</span><span>{html.escape(relative_time(posted_at))}</span>'
@@ -200,8 +261,10 @@ def edition_header(post, latest=False) -> str:
         "</div>"
         f"{headline_html}"
         f"{edition_brief(post.get('brief'))}"
-        "</div>"
     )
+    if latest:
+        return f'<div class="edition-head has-stats"><div class="edition-main">{main}</div>{edition_stats(post)}</div>'
+    return f'<div class="edition-head">{main}</div>'
 
 
 def edition_brief(brief) -> str:
@@ -209,11 +272,12 @@ def edition_brief(brief) -> str:
     Worker builds them from the items when the reviewer's are missing."""
     if not isinstance(brief, dict):
         return ""
-    tags = []
-    for thread in brief.get("threads") or []:
-        label = str(thread.get("label") or "").strip() if isinstance(thread, dict) else ""
-        if label:
-            tags.append(f'<span class="edition-thread">{html.escape(label)}</span>')
+    threads = [t for t in brief.get("threads") or [] if isinstance(t, dict) and str(t.get("label") or "").strip()]
+    tags = [
+        f'<span class="edition-thread" style="color:{c};background:{rgba(c, 0.1)};border-color:{rgba(c, 0.38)}">'
+        f'{html.escape(str(t["label"]).strip())}</span>'
+        for t, c in zip(threads, pick_colors(t.get("theme") for t in threads))
+    ]
     return f'<div class="edition-threads">{"".join(tags)}</div>' if tags else ""
 
 

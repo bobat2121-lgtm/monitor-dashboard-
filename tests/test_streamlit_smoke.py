@@ -47,8 +47,13 @@ def fake_get(url, **_kwargs):
                         "posted_at": "2026-09-04T16:13:31Z",
                         "trigger_label": "12pm ET",
                         "headline": "Physical AI deployments advance",
+                        "reviewed": 19,
+                        "themes": [{"label": "Defense", "count": 1}, {"label": "Space", "count": 1}],
                         "brief": {
-                            "threads": [{"label": "Drone <buying>", "ranks": [1, 2]}, {"label": "Legacy", "ranks": [2]}],
+                            "threads": [
+                                {"label": "Drone <buying>", "ranks": [1, 2], "theme": "Defense"},
+                                {"label": "Legacy", "ranks": [2], "theme": "Defense"},
+                            ],
                             "source": "reviewer",
                         },
                         "items": [
@@ -58,6 +63,7 @@ def fake_get(url, **_kwargs):
                                 "text": "The service plans at least 180 unmanned aircraft.",
                                 "url": "https://example.com/source",
                                 "worker": "aviation-tracker",
+                                "theme": "Defense",
                                 "value": "Defense autonomy procurement",
                             },
                             {
@@ -90,8 +96,18 @@ class StreamlitStartupTests(unittest.TestCase):
             self.assertIn("Air Force &lt;accelerates&gt; its lower-cost MQ-9 successor", rendered)
             self.assertIn("The service plans at least 180 unmanned aircraft.", rendered)
             self.assertIn("A legacy digest item still renders without a headline.", rendered)
-            # The edition's topic tags render under the headline, escaped, without item numbers.
-            self.assertIn('<div class="edition-threads"><span class="edition-thread">Drone &lt;buying&gt;</span><span class="edition-thread">Legacy</span></div>', rendered)
+            # The edition's topic tags render under the headline, escaped, without
+            # item numbers, each in its own colour (a repeated theme moves on).
+            self.assertIn('<span class="edition-thread" style="color:#b692f6;background:rgba(182,146,246,0.1);border-color:rgba(182,146,246,0.38)">Drone &lt;buying&gt;</span>', rendered)
+            self.assertIn('<span class="edition-thread" style="color:#4fd1c5;background:rgba(79,209,197,0.1);border-color:rgba(79,209,197,0.38)">Legacy</span>', rendered)
+            # The latest edition's stats panel: counts, the theme bar and its legend.
+            self.assertIn('<div class="stat"><div class="stat-n">2</div><div class="stat-l">ITEMS</div></div>', rendered)
+            self.assertIn('<div class="stat"><div class="stat-n">19</div><div class="stat-l">REVIEWED</div></div>', rendered)
+            self.assertIn('<div class="stat stat-medium"><div class="stat-n">1</div><div class="stat-l">MEDIUM</div></div>', rendered)
+            self.assertIn('<span style="flex-grow:1;background:#4fd1c5"></span>', rendered)
+            self.assertIn('<span><i style="background:#b692f6"></i>DEFENSE 1</span>', rendered)
+            # Each item carries its theme label.
+            self.assertIn('<span class="feed-theme"><i style="background:#b692f6"></i>Defense</span>', rendered)
             self.assertIn('<span class="value-badge level-medium">Medium</span>', rendered)
 
             search = next(field for field in app.text_input if field.label == "Search published stories")
