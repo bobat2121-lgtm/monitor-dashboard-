@@ -13,6 +13,7 @@ from typing import Any, Mapping
 
 import requests
 import streamlit as st
+import streamlit.components.v1 as components
 
 
 # Fallback vocabulary when /grades/vocabulary is unreachable; the Worker's copy
@@ -106,7 +107,8 @@ def rejected_options(items) -> list[dict]:
         if raw is None or not str(raw).isdigit():
             continue
         title = str(item.get("title") or "")[:88]
-        options.append({"label": f"#{raw} · {title}", "event_id": int(raw), "item_rank": None, "title": title})
+        options.append({"label": f"#{raw} · {title}", "event_id": int(raw), "item_rank": None, "title": title,
+                        "url": item.get("canonical_url") or item.get("url")})
     return options
 
 
@@ -136,6 +138,64 @@ def context_table(options: list[dict], context: Mapping[str, Any]) -> str:
             f"<span class='grade-context-grader'>{html.escape(grader_line(ctx))}</span></div>"
         )
     return "<div class='grade-context'>" + "".join(rows) + "</div>" if rows else ""
+
+
+# Marks the grade form so a picked item can scroll the page to it. The script
+# runs in a same-origin component iframe and reaches the app through its parent.
+FORM_ANCHOR = '<div class="grade-form-anchor"></div>'
+SCROLL_SCRIPT = """
+const doc = window.parent.document;
+const smooth = !window.parent.matchMedia("(prefers-reduced-motion: reduce)").matches;
+let tries = 0;
+(function scroll() {
+  const anchor = doc.querySelector(".grade-form-anchor");
+  const form = anchor && anchor.closest('[data-testid="stForm"]');
+  if (form) form.scrollIntoView({behavior: smooth ? "smooth" : "auto", block: "start"});
+  else if (++tries < 40) setTimeout(scroll, 50);
+})();
+"""
+
+
+def pick_item(key: str, event_id: int) -> None:
+    """Number click: select the item in the grade form, then scroll down to it."""
+    st.session_state[f"gitem_{key}"] = event_id
+    st.session_state["gpick_scroll"] = key
+    st.session_state["gpick_nonce"] = int(st.session_state.get("gpick_nonce") or 0) + 1
+
+
+def pick_list(key: str, options: list[dict], context: Mapping[str, Any]) -> None:
+    """The context table with a clickable number per row and a Source link after
+    the grader's decision. Clicking a number opens that item in the grade form."""
+    with st.container():
+        for option in options:
+            event_id = option["event_id"]
+            ctx = context.get(str(event_id)) or context.get(event_id) or {}
+            url = option.get("url")
+            source = (
+                f"<a class='grade-pick-source' href='{html.escape(str(url), quote=True)}' "
+                "target='_blank' rel='noopener noreferrer'>Source ↗</a>"
+                if url
+                else "<span class='grade-pick-source'></span>"
+            )
+            number, row = st.columns([1, 11], gap="small", vertical_alignment="center")
+            number.button(f"#{event_id}", key=f"gpick_{key}_{event_id}", on_click=pick_item, args=(key, event_id),
+                          help="Grade this item")
+            row.markdown(
+                f"<div class='grade-context-row grade-pick-row'>"
+                f"<span class='grade-context-item'>{html.escape(option['title'])}</span>"
+                f"<span class='grade-context-grader'>{html.escape(grader_line(ctx))}</span>{source}</div>",
+                unsafe_allow_html=True,
+            )
+
+
+def scroll_to_form(key: str) -> None:
+    """After a number click, scroll once to the grade form. The nonce makes each
+    click a new iframe, so picking again reruns the script."""
+    if st.session_state.get("gpick_scroll") != key:
+        return
+    del st.session_state["gpick_scroll"]
+    nonce = st.session_state.get("gpick_nonce", 0)
+    components.html(f"<script>/* grade-form-scroll {nonce} */{SCROLL_SCRIPT}</script>", height=0)
 
 
 def reason_options(vocab: Mapping[str, Any]) -> list[str]:

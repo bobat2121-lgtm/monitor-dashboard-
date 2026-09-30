@@ -23,12 +23,15 @@ module_refresh.refresh()
 from universe_view import render_universe
 from rules_view import render_rules_view
 from grading_ui import (
+    FORM_ANCHOR,
     context_table,
     feed_options,
     fetch_grade_context,
     fetch_vocabulary,
     grade_widgets,
+    pick_list,
     rejected_options,
+    scroll_to_form,
     submit as submit_grade_form,
 )
 
@@ -403,26 +406,31 @@ def grading_panel(post_type, post):
             submit_grade_form(WORKER_URL, post_type, int(post_id), key, vocab)
 
 
-def rejected_grading_panel(items, scope_key: str):
+def rejected_grading_panel(items, scope_key: str) -> bool:
+    """The page's items, each number opening it in the grade form. Returns
+    False when nothing on the page can be graded."""
     options = rejected_options(items)
     if not options:
-        return
+        return False
 
     key = f"rejected_{scope_key}"
     with st.container(border=True):
         st.markdown(
             '<div class="rejected-grader-title">Grade a rejected item</div>'
-            '<div class="rejected-grader-copy">Choose an item from this page, score it '
+            '<div class="rejected-grader-copy">Click an item\'s number to grade it, score it '
             "against the grader's decision, and name the reason.</div>",
             unsafe_allow_html=True,
         )
         context = fetch_grade_context(WORKER_URL, tuple(o["event_id"] for o in options))
-        st.markdown(context_table(options, context), unsafe_allow_html=True)
+        pick_list(key, options, context)
         vocab = fetch_vocabulary(WORKER_URL)
         with st.form(f"rejected_grading_{scope_key}", border=False):
+            st.markdown(FORM_ANCHOR, unsafe_allow_html=True)
             grade_widgets(key, options, vocab)
             if st.form_submit_button("Submit grade", type="primary"):
                 submit_grade_form(WORKER_URL, "rejected", 0, key, vocab)
+    scroll_to_form(key)
+    return True
 
 
 def load_more_button(state_key: str, total: int, step: int, label: str):
@@ -625,15 +633,17 @@ def render_rejected_view():
         unsafe_allow_html=True,
     )
 
-    if st.session_state.get("grading_enabled"):
-        rejected_grading_panel(page_items, f"{days}_{selected_worker}_{page_number}")
-
     if not page_items:
         st.markdown(
             '<div class="empty-state">Nothing rejected in this loaded window.</div>',
             unsafe_allow_html=True,
         )
-    else:
+    # The grade panel lists the page's items itself, so the full list shows
+    # only when grading is off.
+    elif not (
+        st.session_state.get("grading_enabled")
+        and rejected_grading_panel(page_items, f"{days}_{selected_worker}_{page_number}")
+    ):
         st.markdown(render_rejected(page_items), unsafe_allow_html=True)
 
     render_prefilter_kills(rejected.get("prefilter_kills", []))

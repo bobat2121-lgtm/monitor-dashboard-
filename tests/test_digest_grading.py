@@ -287,6 +287,35 @@ class DigestGradingTests(unittest.TestCase):
             },
         )
 
+    def test_rejected_number_opens_its_item_in_the_grade_form(self):
+        app = self.start_app(owner=True, pin="test-pin", view="Rejected")
+        (form_id, form), = self.forms(app, "rejected_grading_").items()
+        suffix = form.selectbox[0].key[len("gitem_"):]
+        rendered = "\n".join(markdown.value for markdown in app.markdown)
+        # Each row carries its source after the grader's decision; the long list is left out.
+        self.assertIn("Grader: reject · score 40 · below_materiality</span><a class='grade-pick-source' "
+                      "href='https://example.com/rejected/14667'", rendered)
+        self.assertNotIn('class="rejected-feed"', rendered)
+        self.assertEqual([b.label for b in app.button if b.key and b.key.startswith("gpick_")], ["#14683", "#14667"])
+        self.assertEqual(app.get("iframe"), [], "nothing scrolls until a number is clicked")
+
+        app.button(f"gpick_{suffix}_14667").click().run()
+        self.assertEqual(list(app.exception), [])
+        scroll = app.get("iframe")
+        self.assertEqual(len(scroll), 1)
+        self.assertIn("grade-form-scroll 1", scroll[0].proto.srcdoc)
+        self.submit(app, form_id, "rejected_grading_")
+        self.assertEqual(self.post.call_args.kwargs["json"]["event_id"], 14667)
+        # The scroll runs once per click, not on every rerun.
+        self.assertEqual(app.get("iframe"), [])
+
+    def test_rejected_list_shows_when_grading_is_off(self):
+        app = self.start_app(view="Rejected")
+        rendered = "\n".join(markdown.value for markdown in app.markdown)
+        self.assertIn('class="rejected-feed"', rendered)
+        self.assertIn("Rejected candidate 14667", rendered)
+        self.assertEqual([b.key for b in app.button if b.key and b.key.startswith("gpick_")], [])
+
 
 if __name__ == "__main__":
     unittest.main()
