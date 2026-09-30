@@ -189,6 +189,8 @@ class RulesTabTests(unittest.TestCase):
         # 6:45 PM ET -> the 6:50 PM edition pickup; 10 PM ET -> tomorrow's first one.
         self.assertEqual(next_pickup_label(datetime(2026, 9, 27, 22, 45, tzinfo=timezone.utc)), "~6:50 PM ET")
         self.assertEqual(next_pickup_label(datetime(2026, 9, 28, 2, 0, tzinfo=timezone.utc)), "tomorrow ~6:50 AM ET")
+        # 3:10 PM ET -> the 3:30 PM Rule Refiner run.
+        self.assertEqual(next_pickup_label(datetime(2026, 9, 28, 19, 10, tzinfo=timezone.utc)), "~3:30 PM ET")
         groups = classify([
             proposed(1, "a" * 30, "b" * 30),
             proposed(2, "a" * 30, "b" * 30, feedback=[{"round": 1, "edit": "c" * 30}]),
@@ -197,7 +199,7 @@ class RulesTabTests(unittest.TestCase):
             proposed(5, "x" * 30, "x" * 30, target="R-0001"),
         ])
         self.assertEqual({k: [d["id"] for d in v] for k, v in groups.items()},
-                         {"back": [2], "with_chatgpt": [3], "your_turn": [1], "signature_only": [5], "waiting": [4]})
+                         {"back": [2], "with_claude": [3], "your_turn": [1], "signature_only": [5], "waiting": [4]})
 
     def test_navigation_has_no_separate_calibration_view(self):
         app = self.start()
@@ -243,18 +245,18 @@ class RulesTabTests(unittest.TestCase):
     def test_composer_sends_the_words_as_a_rule_or_an_item(self):
         app = self.start()
         form = next(f for f in app.get("form") if f.proto.form.form_id == "rule_composer")
-        next(b for b in form.button if b.label == "Send to ChatGPT").click().run()
+        next(b for b in form.button if b.label == "Send to Claude").click().run()
         self.assertEqual(self.posts(), [], "empty words are not sent")
         app.radio("composer_kind").set_value("Item")
         app.text_area("composer_text").set_value(JUMBLE)
         form = next(f for f in app.get("form") if f.proto.form.form_id == "rule_composer")
-        next(b for b in form.button if b.label == "Send to ChatGPT").click().run()
+        next(b for b in form.button if b.label == "Send to Claude").click().run()
         post = self.posts()[-1]
         self.assertTrue(post[1].endswith("/rules/drafts"))
         self.assertEqual(post[2], {"text": JUMBLE, "kind": "item"})
-        self.assertTrue(any("Item draft #12 sent to ChatGPT" in s.value for s in app.success))
+        self.assertTrue(any("Item draft #12 sent to Claude" in s.value for s in app.success))
 
-    def test_card_publishes_chatgpts_version_or_the_owners_edit(self):
+    def test_card_publishes_claudes_version_or_the_owners_edit(self):
         self.drafts = [proposed(8, JUMBLE, REWRITE, target=None, effect={"min_score": 70})]
         self.drafts[0]["proposal"]["supersedes"] = "R-0001"
         app = self.start()
@@ -318,23 +320,23 @@ class RulesTabTests(unittest.TestCase):
         self.assertEqual(post[2], {"text": edited, "feedback": "Keep my maritime/air boundary."})
         self.assertTrue(any("sent back with your edit" in s.value for s in app.success))
 
-        # Now with ChatGPT: pinned above everything, showing what was sent.
+        # Now with Claude: pinned above everything, showing what was sent.
         sent = [{"round": 1, "text": "Keep my maritime/air boundary.", "edit": edited}]
         self.drafts = [proposed(9, "other words for another rule here", "Another rewrite for the owner to sign off."),
                        proposed(8, JUMBLE, REWRITE, feedback=sent, status="queued")]
         app = self.start()
         rendered = self.rendered(app)
-        self.assertLess(rendered.index("With ChatGPT · 1"), rendered.index("Your turn · 1"))
+        self.assertLess(rendered.index("With Claude · 1"), rendered.index("Your turn · 1"))
         self.assertIn("You sent: " + edited, rendered)
         app.button("withdraw_8").click().run()
         self.assertTrue(self.posts()[-1][1].endswith("/rules/drafts/8/reject"))
 
-        # Back from ChatGPT: first on the page, marked, and editable again.
+        # Back from Claude: first on the page, marked, and editable again.
         self.drafts = [proposed(9, "other words for another rule here", "Another rewrite for the owner to sign off."),
                        proposed(8, JUMBLE, REWRITE + " Only uncrewed maritime and air programs.", feedback=sent)]
         app = self.start()
         rendered = self.rendered(app)
-        self.assertLess(rendered.index("Back from ChatGPT · 1"), rendered.index("Your turn · 1"))
+        self.assertLess(rendered.index("Back from Claude · 1"), rendered.index("Your turn · 1"))
         self.assertIn("your edit applied", rendered)
 
     def test_signature_only_updates_publish_in_bulk_and_first_versions_wait(self):
@@ -344,7 +346,7 @@ class RulesTabTests(unittest.TestCase):
         app = self.start()
         labels = "\n".join(e.label for e in app.expander)
         self.assertIn("Signature-only updates · 2", labels)
-        self.assertIn("Waiting for ChatGPT's first version · 4", labels)
+        self.assertIn("Waiting for Claude's first version · 4", labels)
         self.assertTrue(any(t.key == "card_text_23" for t in app.text_area), "a rewrite with score bounds gets its own card")
         self.assertFalse(any(t.key == "card_text_21" for t in app.text_area), "signature-only drafts are listed compactly")
         app.multiselect("signature_only_flip").set_value([22]).run()
@@ -361,9 +363,9 @@ class RulesTabTests(unittest.TestCase):
         self.drafts = [drop, retire]
         app = self.start()
         rendered = self.rendered(app)
-        self.assertIn("ChatGPT proposes dropping R-0034", rendered)
+        self.assertIn("Claude proposes dropping R-0034", rendered)
         self.assertIn("covered by R-0001", rendered)
-        self.assertIn("ChatGPT proposes retiring R-0012", rendered)
+        self.assertIn("Claude proposes retiring R-0012", rendered)
         self.assertFalse(any(b.key == "publish_41" for b in app.button))
         app.button("drop_41").click().run()
         self.assertTrue(self.posts()[-1][1].endswith("/rules/drafts/41/drop"))
@@ -378,7 +380,7 @@ class RulesTabTests(unittest.TestCase):
                         "kind": "rule", "raw_text": "my rough words " + "x" * 300, "text": "The rewrite", "proposal": {"text": "The discarded rewrite"}}]
         app = self.start()
         rendered = self.rendered(app)
-        # Each row shows its label and the words the owner sent to ChatGPT.
+        # Each row shows its label and the words the owner sent to Claude.
         self.assertIn('loop-kind loop-kind-item', rendered)
         self.assertIn('<div class="recent-text">You sent: police drone &lt;renewals&gt; are borderline for me</div>', rendered)
         self.assertIn("You sent: my rough words", rendered)
@@ -403,7 +405,7 @@ class RulesTabTests(unittest.TestCase):
         app.button("ri_revise_R-0002").click().run()
         post = self.posts()[-1]
         self.assertTrue(post[1].endswith("/rules/R-0002/refine")); self.assertEqual(post[2], {"feedback": "Only ribbon cuttings and bell ringings."})
-        self.assertTrue(any("sent to ChatGPT as draft #13" in s.value for s in app.success))
+        self.assertTrue(any("sent to Claude as draft #13" in s.value for s in app.success))
         app.text_input("ri_search").set_value("").run()
         app.button("ri_retire_I-0001").click().run()
         self.assertTrue(self.posts()[-1][1].endswith("/rules/I-0001/deactivate"))
