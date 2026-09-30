@@ -24,11 +24,11 @@ obsidian black base, electric blue navigation and restrained copper-orange accen
   not selected for an edition.
 - **Rules** (Owner PIN) — one tab, four sections: **Drafts and rules**
   (**Write a rule** in your own words, optionally about an event id; the
-  scheduled ChatGPT reviewer proposes a universal rewrite after its next
+  scheduled Claude reviewer proposes a universal rewrite after its next
   edition, shown beside your words with its signature, score bounds and any
   rule it overlaps or would replace; approve it, edit it, send it back with
   a note, or reject it. Rule-scoped grades take the same path. Active rules
-  show their calibration state and score bounds; ask ChatGPT to revise a
+  show their calibration state and score bounds; ask Claude to revise a
   rule or write the missing signatures; supersede, set score bounds,
   deactivate, set signature, fold into a brief version), **Calibration** (the monthly scoreboard: headline and delta,
   trend, worst three, most improved, rules by state, drill-down),
@@ -38,7 +38,7 @@ obsidian black base, electric blue navigation and restrained copper-orange accen
 
 Data comes from a public read-only JSON endpoint (`/digests`) served by a
 Cloudflare Worker. Ranking and editorial summaries are produced by the
-scheduled ChatGPT task; upstream monitors provide source facts rather than
+scheduled Claude routine; upstream monitors provide source facts rather than
 editorial prose. No secrets are stored in this repo — the read endpoints are
 public by design, while owner feedback requires a PIN supplied at runtime.
 

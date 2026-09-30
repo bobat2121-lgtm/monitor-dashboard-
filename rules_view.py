@@ -1,12 +1,12 @@
 """Rules page: one loop for tuning the grader.
 
-Grade an item on the feed (or write here) as a Rule or an Item; ChatGPT drafts
-it at its next run; the owner edits ChatGPT's version and sends it back (the
+Grade an item on the feed (or write here) as a Rule or an Item; Claude drafts
+it at its next run; the owner edits Claude's version and sends it back (the
 edit travels with the card) or publishes it; calibration watches the owner's
 grades and starts new drafts when a pattern holds. Three tabs:
 
-- Drafts: cards pinned in the order that needs the owner (back from ChatGPT,
-  with ChatGPT, your turn, waiting), with Publish / Send back / Discard, and
+- Drafts: cards pinned in the order that needs the owner (back from Claude,
+  with Claude, your turn, waiting), with Publish / Send back / Discard, and
   Undo for anything decided in the last 24 hours.
 - Rules & Items: what the grader uses, searchable, with Revise and Retire.
 - Calibration: trends that become drafts, the scoreboard, the monthly audit.
@@ -43,10 +43,12 @@ STATE_LABEL = {
 }
 KIND_LABEL = {"rule": "Rule", "item": "Item"}
 SIGNATURE_LABEL = "Applies to (workers: a, b; tickers: X; keywords: k)"
-# When ChatGPT answers drafts (America/New_York): right after each edition
-# (the review task's step 10) and at each Rule Refiner run.
-PICKUPS_ET = ["06:50", "08:50", "10:30", "11:50", "15:00", "16:50", "18:50", "21:30"]
-WAIT_NOTE = "ChatGPT answers at its next run."
+# When Claude answers drafts (America/New_York): the Grader routine (runs 6:30,
+# 8:30, 11:30 am, 4:30, 6:30 pm) answers them right after committing each
+# edition (its step 10, ~20 min in), and the Rule Refiner routine at 10:30 am,
+# 3:30 pm and 9:30 pm.
+PICKUPS_ET = ["06:50", "08:50", "10:30", "11:50", "15:30", "16:50", "18:50", "21:30"]
+WAIT_NOTE = "Claude answers at its next run."
 
 
 def api(base, pin, path="", payload=None, method=None):
@@ -130,7 +132,7 @@ def effect_inputs(key: str, effect) -> tuple:
     floor_col, ceiling_col = st.columns(2)
     floor = floor_col.number_input(
         "Score floor (optional)", min_value=0, max_value=100, step=1, value=(effect or {}).get("min_score"), key=f"{key}_floor",
-        help="A hard minimum for every matching item. With rule binding on, a lower score is refused unless ChatGPT waives the rule with a reason.",
+        help="A hard minimum for every matching item. With rule binding on, a lower score is refused unless Claude waives the rule with a reason.",
     )
     ceiling = ceiling_col.number_input(
         "Score ceiling (optional)", min_value=0, max_value=100, step=1, value=(effect or {}).get("max_score"), key=f"{key}_ceiling",
@@ -142,7 +144,7 @@ def effect_inputs(key: str, effect) -> tuple:
 def draft_origin(draft) -> str:
     run_id = str(draft.get("run_id") or "")
     if run_id == "reviewer-drop":
-        return f"ChatGPT proposes retiring {draft.get('target_rule_id')}"
+        return f"Claude proposes retiring {draft.get('target_rule_id')}"
     if run_id == "calibration-trend":
         return f"from calibration · {len(draft.get('source_feedback_ids') or [])} grades"
     if draft.get("target_rule_id"):
@@ -174,7 +176,7 @@ def normalized(text) -> str:
 
 
 def next_pickup_label(now=None) -> str:
-    """The next time ChatGPT answers drafts, as '~6:50 PM ET' (or 'tomorrow ~…')."""
+    """The next time Claude answers drafts, as '~6:50 PM ET' (or 'tomorrow ~…')."""
     now_et = (now or datetime.now(timezone.utc)).astimezone(EASTERN)
     for day in (0, 1):
         date = (now_et + timedelta(days=day)).date()
@@ -190,7 +192,7 @@ def next_pickup_label(now=None) -> str:
 # ---------------------------------------------------------------- draft states
 
 def sent_back(draft) -> bool:
-    """The owner answered a ChatGPT version (round >= 1), so the card is pinned."""
+    """The owner answered a Claude version (round >= 1), so the card is pinned."""
     return any(int(f.get("round") or 0) >= 1 for f in draft.get("owner_feedback") or [])
 
 
@@ -207,11 +209,11 @@ def is_signature_only(draft) -> bool:
 
 
 def classify(drafts) -> dict:
-    groups = {"back": [], "with_chatgpt": [], "your_turn": [], "signature_only": [], "waiting": []}
+    groups = {"back": [], "with_claude": [], "your_turn": [], "signature_only": [], "waiting": []}
     for draft in drafts:
         status = draft.get("refine_status")
         if status == "queued":
-            groups["with_chatgpt" if sent_back(draft) else "waiting"].append(draft)
+            groups["with_claude" if sent_back(draft) else "waiting"].append(draft)
         elif status == "proposed" and sent_back(draft):
             groups["back"].append(draft)
         elif status == "proposed" and is_signature_only(draft):
@@ -249,13 +251,13 @@ def render_composer(base, pin):
                              "Items are best made from the feed's Grade row, which links the story.")
         text = st.text_area("In your own words", key="composer_text", height=90,
                             placeholder="e.g. counter-drone orders under $1M are borderline unless it's a covered company")
-        if st.form_submit_button("Send to ChatGPT", type="primary"):
+        if st.form_submit_button("Send to Claude", type="primary"):
             if len(text.strip()) < 20:
-                st.info("Write at least a sentence (20 characters) so ChatGPT has something to work with.")
+                st.info("Write at least a sentence (20 characters) so Claude has something to work with.")
             else:
                 _act(base, pin, "/drafts", {"text": text.strip(), "kind": kind.lower()},
                      lambda r: f"{KIND_LABEL.get(r.get('kind'), 'Draft')} draft #{r.get('draft_id')} "
-                               f"{'was already queued' if r.get('duplicate') else 'sent to ChatGPT'} · back {next_pickup_label()}")
+                               f"{'was already queued' if r.get('duplicate') else 'sent to Claude'} · back {next_pickup_label()}")
 
 
 def recent_label(draft) -> str:
@@ -271,7 +273,7 @@ def recent_label(draft) -> str:
 
 
 def recent_text(draft, limit: int = 240) -> str:
-    """The words the owner sent to ChatGPT for this draft, so each undo row
+    """The words the owner sent to Claude for this draft, so each undo row
     says which request it is."""
     text = draft.get("raw_text") or draft.get("text") or (draft.get("proposal") or {}).get("text")
     text = " ".join(str(text or "").split())
@@ -338,7 +340,7 @@ def applies_html(proposal, target=None, kind="rule") -> str:
 
 @st.fragment
 def render_card(base, pin, draft, status):
-    """One draft: ChatGPT's version in an editable box, and three buttons."""
+    """One draft: Claude's version in an editable box, and three buttons."""
     draft_id = draft.get("id")
     proposal = draft.get("proposal") or {}
     target = draft.get("target_rule_id")
@@ -355,14 +357,14 @@ def render_card(base, pin, draft, status):
         if target and kind != stored:
             st.caption(f"Publishing as {'an item' if kind == 'item' else 'a rule'} retires {target} and creates a new "
                        f"{'item' if kind == 'item' else 'rule'} in its place · undo within 24 h")
-        text = st.text_area("ChatGPT's version (edit it, then publish or send back)" if proposal.get("text") else "Your draft",
+        text = st.text_area("Claude's version (edit it, then publish or send back)" if proposal.get("text") else "Your draft",
                             value=base_text, key=f"card_text_{draft_id}", height=110)
         st.markdown(
             applies_html(proposal or {"signature": draft.get("signature")}, target, kind)
             + (f'<div class="refine-note">{html.escape(str(proposal["rationale"]))}</div>' if proposal.get("rationale") else ""),
             unsafe_allow_html=True,
         )
-        note = st.text_input("Note to ChatGPT (optional)", key=f"card_note_{draft_id}",
+        note = st.text_input("Note to Claude (optional)", key=f"card_note_{draft_id}",
                              placeholder="what else to change; your edits above go back with the card")
         details = st.toggle("Details", key=f"card_details_{draft_id}")
         signature, floor, ceiling, replace = None, None, None, False
@@ -390,7 +392,7 @@ def render_card(base, pin, draft, status):
                 if replace:
                     payload["supersedes"] = proposal["supersedes"]
             _act(base, pin, f"/drafts/{draft_id}/approve", payload, approved_message)
-        if send.button("Send back to ChatGPT", key=f"sendback_{draft_id}"):
+        if send.button("Send back to Claude", key=f"sendback_{draft_id}"):
             edited = text.strip()
             payload = {"kind": kind} if kind != stored else {}
             if normalized(edited) != normalized(base_text):
@@ -398,11 +400,11 @@ def render_card(base, pin, draft, status):
             if note.strip():
                 payload["feedback"] = note.strip()
             if not payload:
-                st.info("Edit the text, add a note or change Publish as, so ChatGPT knows what to change.")
+                st.info("Edit the text, add a note or change Publish as, so Claude knows what to change.")
             else:
                 relabel = f" as {'an item' if kind == 'item' else 'a rule'}" if kind != stored else ""
                 _act(base, pin, f"/drafts/{draft_id}/refine", payload,
-                     lambda r: f"Draft #{draft_id} sent back{relabel}{' with your edit' if r.get('edit') else ''} · pinned at the top until ChatGPT returns it {next_pickup_label()}")
+                     lambda r: f"Draft #{draft_id} sent back{relabel}{' with your edit' if r.get('edit') else ''} · pinned at the top until Claude returns it {next_pickup_label()}")
         if discard.button("Discard", key=f"discard_{draft_id}"):
             _act(base, pin, f"/drafts/{draft_id}/reject", {},
                  lambda r: f"Draft #{draft_id} discarded{f'; {target} unchanged' if target else ''} · undo within 24 h")
@@ -410,7 +412,7 @@ def render_card(base, pin, draft, status):
 
 @st.fragment
 def render_drop_card(base, pin, draft):
-    """ChatGPT proposes dropping instead of rewriting; the owner decides."""
+    """Claude proposes dropping instead of rewriting; the owner decides."""
     draft_id = draft.get("id")
     proposal = draft.get("proposal") or {}
     target = draft.get("target_rule_id")
@@ -421,10 +423,10 @@ def render_drop_card(base, pin, draft):
     for rule_id in proposal.get("conflicts") or []:
         chips.append(f'<span class="refine-chip warn">conflicts with {html.escape(rule_id)}</span>')
     with st.container(border=True):
-        st.markdown(card_header(draft, f"ChatGPT proposes dropping {subject}"), unsafe_allow_html=True)
+        st.markdown(card_header(draft, f"Claude proposes dropping {subject}"), unsafe_allow_html=True)
         st.markdown(
             f'<div class="refine-owner">{html.escape(str(draft.get("raw_text") or draft.get("text") or ""))}</div>'
-            '<div class="refine-label" style="margin-top:10px">Why ChatGPT would drop it</div>'
+            '<div class="refine-label" style="margin-top:10px">Why Claude would drop it</div>'
             f'<div class="rule-text">{html.escape(str(proposal.get("rationale") or ""))}</div>'
             + ('<div class="refine-chips">' + "".join(chips) + "</div>" if chips else ""),
             unsafe_allow_html=True,
@@ -451,7 +453,7 @@ def render_waiting_row(base, pin, draft, pinned: bool):
     with st.container(border=True):
         text_col, button_col = st.columns([6, 1])
         text_col.markdown(
-            card_header(draft, f"with ChatGPT · back {next_pickup_label()}")
+            card_header(draft, f"with Claude · back {next_pickup_label()}")
             + f'<div class="refine-owner">{"You sent: " if pinned and sent else ""}{html.escape(words)}</div>',
             unsafe_allow_html=True,
         )
@@ -513,15 +515,15 @@ def render_drafts_tab(base, pin):
         return
     st.caption(
         f"{len(groups['back']) + len(groups['your_turn']) + len(groups['signature_only'])} for you · "
-        f"{len(groups['with_chatgpt']) + len(groups['waiting'])} with ChatGPT · next ChatGPT run {next_pickup_label()}"
+        f"{len(groups['with_claude']) + len(groups['waiting'])} with Claude · next Claude run {next_pickup_label()}"
     )
     if groups["back"]:
-        section("Back from ChatGPT", len(groups["back"]))
+        section("Back from Claude", len(groups["back"]))
         for draft in groups["back"]:
             render_drop_card(base, pin, draft) if is_drop(draft) else render_card(base, pin, draft, "your edit applied · ready")
-    if groups["with_chatgpt"]:
-        section("With ChatGPT", len(groups["with_chatgpt"]))
-        for draft in groups["with_chatgpt"]:
+    if groups["with_claude"]:
+        section("With Claude", len(groups["with_claude"]))
+        for draft in groups["with_claude"]:
             render_waiting_row(base, pin, draft, pinned=True)
     if groups["your_turn"] or groups["signature_only"]:
         section("Your turn", len(groups["your_turn"]) + len(groups["signature_only"]))
@@ -531,9 +533,9 @@ def render_drafts_tab(base, pin):
             if is_drop(draft):
                 render_drop_card(base, pin, draft)
             else:
-                render_card(base, pin, draft, "ready" if draft.get("refine_status") == "proposed" else "not sent to ChatGPT")
+                render_card(base, pin, draft, "ready" if draft.get("refine_status") == "proposed" else "not sent to Claude")
     if groups["waiting"]:
-        with st.expander(f"Waiting for ChatGPT's first version · {len(groups['waiting'])}"):
+        with st.expander(f"Waiting for Claude's first version · {len(groups['waiting'])}"):
             for draft in groups["waiting"]:
                 render_waiting_row(base, pin, draft, pinned=False)
 
@@ -547,8 +549,8 @@ def render_signature_pass(base, pin, rules):
     if not missing:
         return
     st.caption(f"{len(missing)} active rule{'s have' if len(missing) != 1 else ' has'} no signature, so nothing can tell when it applies.")
-    if st.button(f"Ask ChatGPT to write signatures ({len(missing)})", key="rules_signature_pass"):
-        _act(base, pin, "/refine-missing", {}, lambda r: f"{r.get('queued')} revision(s) sent to ChatGPT · they come back to Drafts")
+    if st.button(f"Ask Claude to write signatures ({len(missing)})", key="rules_signature_pass"):
+        _act(base, pin, "/refine-missing", {}, lambda r: f"{r.get('queued')} revision(s) sent to Claude · they come back to Drafts")
 
 
 def matches(entry, query) -> bool:
@@ -595,9 +597,9 @@ def render_rules_items_tab(base, pin):
             if entry.get("active"):
                 note = st.text_input("What should change?", key=f"ri_note_{rule_id}", placeholder="e.g. too broad: maritime and air programs only")
                 revise, retire = st.columns(2)
-                if revise.button("Revise with ChatGPT", key=f"ri_revise_{rule_id}"):
+                if revise.button("Revise with Claude", key=f"ri_revise_{rule_id}"):
                     _act(base, pin, f"/{rule_id}/refine", {"feedback": note.strip()},
-                         lambda r: f"Revision of {r.get('rule_id')} sent to ChatGPT as draft #{r.get('draft_id')} · back in Drafts {next_pickup_label()}")
+                         lambda r: f"Revision of {r.get('rule_id')} sent to Claude as draft #{r.get('draft_id')} · back in Drafts {next_pickup_label()}")
                 if retire.button("Retire", key=f"ri_retire_{rule_id}"):
                     _act(base, pin, f"/{rule_id}/deactivate", {}, lambda r: f"{r.get('rule_id')} retired · restore it from Inactive")
             elif not entry.get("superseded_by"):
@@ -653,7 +655,7 @@ def render_trends(base, pin):
             except ValueError as exc:
                 st.error(str(exc))
             else:
-                flash(f"Trend sent to ChatGPT as draft #{result.get('draft_id')} · back in Drafts {next_pickup_label()}")
+                flash(f"Trend sent to Claude as draft #{result.get('draft_id')} · back in Drafts {next_pickup_label()}")
 
 
 def render_calibration_tab(base, pin, guides):

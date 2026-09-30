@@ -230,7 +230,7 @@ def grade_widgets(key: str, options: list[dict], vocab: Mapping[str, Any]) -> No
     st.radio(
         "Save as", list(SAVE_AS), horizontal=True, key=f"gscope_{key}",
         help="Just a grade: teaches the grader and calibration. Item: a worked example the grader follows for similar stories "
-             "(guides, never binds). Rule: a standing principle. ChatGPT drafts Items and Rules; you sign them off in Rules → Drafts.",
+             "(guides, never binds). Rule: a standing principle. Claude drafts Items and Rules; you sign them off in Rules → Drafts.",
     )
 
 
@@ -275,7 +275,7 @@ def handle_response(response) -> None:
         grade = body.get("grade") or {}
         draft = body.get("rule_draft_id")
         noun = "Item" if body.get("draft_kind") == "item" else "Rule"
-        suffix = f" · {noun} draft #{draft} sent to ChatGPT; it comes back to Rules → Drafts" if draft else ""
+        suffix = f" · {noun} draft #{draft} sent to Claude; it comes back to Rules → Drafts" if draft else ""
         st.success(f"Stored grade #{body.get('id')} · {grade.get('target_score')} {grade.get('target_action')}{suffix}")
     elif response.status_code == 403:
         st.error("Bad PIN.")
