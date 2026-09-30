@@ -175,6 +175,29 @@ html, body, button, input, textarea, [data-testid="stAppViewContainer"] {
 .grade-context-item { color:var(--digest-text); flex:1 1 55%; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .grade-context-grader { color:var(--digest-text-muted); flex:1 1 45%; text-align:right; }
 
+/* Rejected grade panel: each number opens its item in the grade form */
+[data-testid="stVerticalBlock"]:has(.grade-pick-row):not(:has([data-testid="stForm"])) { gap:2px; }
+[data-testid="stHorizontalBlock"]:has(.grade-pick-row) { flex-wrap:nowrap !important; gap:10px; }
+[data-testid="stHorizontalBlock"]:has(.grade-pick-row) > [data-testid="stColumn"] { min-width:0 !important; }
+[data-testid="stHorizontalBlock"]:has(.grade-pick-row) > [data-testid="stColumn"]:first-child { flex:0 0 64px !important; width:64px !important; }
+[data-testid="stHorizontalBlock"]:has(.grade-pick-row) > [data-testid="stColumn"]:last-child { flex:1 1 0 !important; width:auto !important; }
+[data-testid="stHorizontalBlock"]:has(.grade-pick-row) [data-testid="stButton"] button { min-height:24px; padding:0 2px; border:0; background:transparent; color:#87b4ff; }
+[data-testid="stMarkdownContainer"]:has(> .grade-pick-row) { margin-bottom:0; }
+.grade-pick-row { min-height:24px; align-items:center; }
+[data-testid="stHorizontalBlock"]:has(.grade-pick-row) [data-testid="stButton"] button p { font:12px/1.5 var(--font-mono); }
+[data-testid="stHorizontalBlock"]:has(.grade-pick-row) [data-testid="stButton"] button:hover { color:#c6ddff; text-decoration:underline; }
+.grade-pick-source { flex:0 0 64px; text-align:right; color:#87b4ff; font:12px/1.5 var(--font-mono); text-decoration:none !important; }
+.grade-pick-source:hover { color:#c6ddff; text-decoration:underline !important; }
+[data-testid="stForm"]:has(.grade-form-anchor) { scroll-margin-top:72px; }
+.element-container:has(.grade-form-anchor), [data-testid="stElementContainer"]:has(.grade-form-anchor),
+.element-container:has(iframe[srcdoc*="grade-form-scroll"]), [data-testid="stElementContainer"]:has(iframe[srcdoc*="grade-form-scroll"]) { display:none; }
+@media (max-width:760px) {
+  [data-testid="stVerticalBlock"]:has(.grade-pick-row):not(:has([data-testid="stForm"])) { gap:10px; }
+  .grade-pick-row { flex-wrap:wrap; row-gap:0; }
+  .grade-pick-row .grade-context-item { flex-basis:100%; }
+  .grade-pick-row .grade-context-grader { flex:1 1 0; text-align:left; }
+}
+
 /* Rules tab */
 .rules-section { font:10px/1.5 var(--font-mono); letter-spacing:1.4px; text-transform:uppercase; color:var(--digest-text-secondary); margin:18px 0 10px; }
 .rules-list { display:flex; flex-direction:column; gap:10px; }
