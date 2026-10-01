@@ -7,8 +7,9 @@ from unittest.mock import patch
 import streamlit as st
 from streamlit.testing.v1 import AppTest
 
-from radar_view import (cadence_ceiling, chips_html, classify, effects_html, evidence_html, facts_html, history_html, md_escape, next_pickup_label,
-                        sample_count, samples_html, sent_words, short_time, split_aliases)
+from radar_view import (EXTRA_NAMES_FIELD, TOPIC_FILTER_FIELD, cadence_ceiling, chips_html, classify, count_text, effects_html, evidence_html,
+                        facts_html, history_html, include_terms_field, md_escape, next_pickup_label, sample_count, samples_html, sent_words,
+                        short_time, split_aliases)
 
 
 APP_PATH = Path(__file__).resolve().parents[1] / "streamlit_app.py"
@@ -375,6 +376,60 @@ class RadarTabTests(unittest.TestCase):
         self.assertEqual(cadence_ceiling({**new, "entity_ids": ["entity_other"], "cadence_minutes": 30}, discovery), 60, "another public company")
         self.assertEqual(cadence_ceiling({**new, "entity_ids": ["entity_other"], "companyStatus": "private", "cadence_minutes": 30}, discovery), 120)
 
+    def test_include_terms_label_follows_the_relationship_filter(self):
+        self.assertEqual(EXTRA_NAMES_FIELD, (
+            "Extra names to keep (one per line)",
+            "Posts naming the covered company, its subsidiaries or products, or with a deal word plus an autonomy topic, are kept automatically."
+            " A post naming one of these is kept too."))
+        self.assertEqual(TOPIC_FILTER_FIELD, ("Topic filter words (one per line)",
+                                              "A post must mention at least one of these. Leave empty to collect every company update."))
+        customer = CUSTOMER["proposal"]["operations"][0]["value"]
+        self.assertEqual(include_terms_field(customer, CUSTOMER), EXTRA_NAMES_FIELD)
+        self.assertEqual(include_terms_field(SOURCE["value"], NEW_SOURCE), TOPIC_FILTER_FIELD, "an acquired business keeps every post")
+        for kind in ("partner", "supplier", "program", None, ""):
+            value = {**SOURCE["value"], "relationship": {**SOURCE["value"]["relationship"], "kind": kind}}
+            self.assertEqual(include_terms_field(value, NEW_SOURCE), EXTRA_NAMES_FIELD, f"kind {kind!r}: the value's own relationship wins")
+        self.assertEqual(include_terms_field({**customer, "radar_lane": None, "relationship": None}, CUSTOMER), TOPIC_FILTER_FIELD,
+                         "null takes the source out of the lane")
+        self.assertEqual(include_terms_field(GAP_SOURCE["value"], GAP), TOPIC_FILTER_FIELD, "a company's own newsroom")
+        # An edit to an existing source that leaves the lane and the
+        # relationship out keeps the stored ones: the card's kind decides.
+        existing = {"key": "managed_beta", "include_terms": ["Kratos"]}
+        self.assertEqual(include_terms_field(existing, CUSTOMER), EXTRA_NAMES_FIELD)
+        self.assertEqual(include_terms_field(existing, NEW_SOURCE), TOPIC_FILTER_FIELD)
+        self.assertEqual(include_terms_field(existing, draft(3, lane="discovery", proposal={"relationship_kind": "customer"})), TOPIC_FILTER_FIELD)
+        self.assertEqual(include_terms_field({"include_terms": []}, CUSTOMER), TOPIC_FILTER_FIELD, "a new source without a lane is outside it")
+        self.assertEqual(include_terms_field(existing), TOPIC_FILTER_FIELD, "no card")
+
+    def test_details_call_a_customer_sources_include_terms_extra_names(self):
+        # One action per session (Streamlit 1.37 AppTest).
+        self.drafts = [CUSTOMER]
+        app = self.start()
+        app.toggle("radar_details_17").set_value(True).run()
+        self.assertEqual(list(app.exception), [])
+        field = app.text_area("radar_17_op0_include")
+        self.assertEqual((field.label, field.help), EXTRA_NAMES_FIELD)
+        self.assertEqual(field.value, "Kratos", "the same text as before")
+
+    def test_details_keep_the_topic_filter_label_for_an_acquired_business(self):
+        app = self.start()
+        app.toggle("radar_details_12").set_value(True).run()
+        self.assertEqual(list(app.exception), [])
+        field = app.text_area("radar_12_op1_include")
+        self.assertEqual((field.label, field.help), TOPIC_FILTER_FIELD)
+
+    def test_an_edited_extra_name_is_parsed_like_a_topic_word(self):
+        self.drafts = [CUSTOMER]
+        app = self.start()
+        app.toggle("radar_details_17").set_value(True).run()
+        app.text_area("radar_17_op0_include").set_value("Kratos\n\nKratos Defense\n")
+        app.button("radar_approve_17").click().run()
+        self.assertEqual(list(app.exception), [])
+        operations = self.posts()[-1][2]["operations"]
+        expected = copy.deepcopy(CUSTOMER["proposal"]["operations"][0])
+        expected["value"]["include_terms"] = ["Kratos", "Kratos Defense"]
+        self.assertEqual(operations, [expected])
+
     def test_a_failed_reprobe_stays_on_the_card(self):
         self.approve_error = PROBE_FAILED
         app = self.start()
@@ -505,6 +560,24 @@ class RadarTabTests(unittest.TestCase):
         table = app.dataframe[0].value
         self.assertEqual(list(table.columns), ["Source", "Covered company", "Kind", "Every (min)", "Status", "Last check", "Last article"])
         self.assertEqual(table.iloc[0].tolist(), ["Acme Robotics newsroom", "Ondas", "Acquired", 30, "Collecting", "Sep 30, 1:00 PM ET", "Sep 29, 11:00 AM ET"])
+
+    def test_lane_health_shows_7_day_counts_when_the_worker_sends_them(self):
+        # A managed source with counts, and a listed source outside the
+        # managed manifest, which the Worker reports as null.
+        self.lanes = [{**LANES[0], "kept_7d": 12, "excluded_7d": 5,
+                       "excluded_reasons_7d": {"outside_relationship_scope": 4, "external_media": 1}},
+                      {**LANES[0], "key": "beta_news", "name": "Beta Corp newsroom", "relationship_kind": "customer", "covered_entity_name": "Kratos",
+                       "kept_7d": None, "excluded_7d": None, "excluded_reasons_7d": None}]
+        app = self.start()
+        table = app.dataframe[0].value
+        self.assertEqual(list(table.columns), ["Source", "Covered company", "Kind", "Every (min)", "Status", "Last check", "Last article",
+                                               "Kept (7d)", "Filtered (7d)"])
+        self.assertEqual(table.iloc[0].tolist(), ["Acme Robotics newsroom", "Ondas", "Acquired", 30, "Collecting", "Sep 30, 1:00 PM ET",
+                                                  "Sep 29, 11:00 AM ET", "12", "5"])
+        self.assertEqual(table.iloc[1].tolist()[-2:], ["—", "—"])
+        self.assertNotIn("outside_relationship_scope", table.to_string(), "reasons are not shown in phase 2")
+        self.assertEqual([count_text(v) for v in (0, 7, None, True, "3", 2.5)], ["0", "7", "—", "—", "—", "—"])
+        self.assertEqual(count_text({}.get("kept_7d")), "—", "a missing field")
 
     def test_malformed_evidence_lists_never_stop_the_tab(self):
         # Scout summaries the Worker stored before it checked these lists: a

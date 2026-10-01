@@ -68,6 +68,15 @@ NAME_SUFFIXES = {"inc", "inc.", "llc", "l.l.c.", "ltd", "ltd.", "limited", "corp
 # The Worker's slowest check for a Radar relationship source
 # (digest_config.radar.relationship_cadence_minutes; contract default).
 RELATIONSHIP_CADENCE_MINUTES = 30
+# The Details label and help of a source's include_terms. On a relationship
+# source of any kind but acquired, the Worker's relationship filter already
+# keeps posts naming the covered company or pairing a deal word with an
+# autonomy topic, and include_terms only adds posts to those.
+TOPIC_FILTER_FIELD = ("Topic filter words (one per line)",
+                      "A post must mention at least one of these. Leave empty to collect every company update.")
+EXTRA_NAMES_FIELD = ("Extra names to keep (one per line)",
+                     "Posts naming the covered company, its subsidiaries or products, or with a deal word plus an autonomy topic, "
+                     "are kept automatically. A post naming one of these is kept too.")
 
 
 def api(base, pin, path="", payload=None, method=None):
@@ -136,6 +145,12 @@ def number(value) -> int:
         return int(value)
     except (TypeError, ValueError):
         return 0
+
+
+def count_text(value) -> str:
+    """A Lane health count as text, '—' for null or a missing field: ints
+    mixed with '—' would make one table column two Arrow types."""
+    return str(value) if isinstance(value, int) and not isinstance(value, bool) else "—"
 
 
 def lines(text) -> list:
@@ -497,6 +512,25 @@ def _text_field(value, field, label, key, shown, parse, area=False, **kwargs):
         value[field] = parse(entered)
 
 
+def in_relationship_lane(value, draft=None) -> bool:
+    """Whether Approve saves this source_upsert in the relationship lane, as
+    applyOwnerChange decides it."""
+    if "radar_lane" in value:
+        return value.get("radar_lane") == "relationship"
+    # An edit to an existing source that leaves the lane out keeps it.
+    return bool(value.get("key")) and lane_of(draft or {}) == "relationship"
+
+
+def include_terms_field(value, draft=None) -> tuple:
+    """The label and help of a source's include_terms: EXTRA_NAMES_FIELD on a
+    relationship source whose kind is not acquired, TOPIC_FILTER_FIELD
+    anywhere else. The kind is the value's own relationship when it carries
+    one (Approve stores that one), else the card's relationship_kind."""
+    relationship = value.get("relationship")
+    kind = relationship.get("kind") if isinstance(relationship, dict) else proposal_of(draft or {}).get("relationship_kind")
+    return EXTRA_NAMES_FIELD if in_relationship_lane(value, draft) and kind != "acquired" else TOPIC_FILTER_FIELD
+
+
 def cadence_ceiling(value, draft=None) -> int:
     """The slowest check applyOwnerChange accepts for this source_upsert, so
     the field never offers a cadence Approve would refuse: a relationship
@@ -504,11 +538,7 @@ def cadence_ceiling(value, draft=None) -> int:
     public company 60, anything else 120. Claude's own cadence always fits:
     the Worker checked it against the live settings."""
     draft = draft or {}
-    if "radar_lane" in value:
-        relationship = value.get("radar_lane") == "relationship"
-    else:
-        # An edit to an existing source that leaves the lane out keeps it.
-        relationship = bool(value.get("key")) and lane_of(draft) == "relationship"
+    relationship = in_relationship_lane(value, draft)
     covered = proposal_of(draft).get("covered_entity_id")
     if relationship:
         ceiling = RELATIONSHIP_CADENCE_MINUTES
@@ -566,9 +596,11 @@ def operation_fields(draft_id, operations, draft=None) -> list:
             _text_field(value, "name", "Name", f"{key}_name", str(value.get("name") or ""), str.strip)
         if kind == "source_upsert":
             _text_field(value, "endpoint", "Newsroom URL", f"{key}_endpoint", str(value.get("endpoint") or ""), str.strip)
-            _text_field(value, "include_terms", "Topic filter words (one per line)", f"{key}_include",
-                        "\n".join(str(x) for x in value.get("include_terms") or []), lines, area=True, height=90,
-                        help="A post must mention at least one of these. Leave empty to collect every company update.")
+            # Only the label and help depend on the lane: the same key and
+            # parsing, so an untouched field goes back exactly as written.
+            label, help_text = include_terms_field(value, draft)
+            _text_field(value, "include_terms", label, f"{key}_include",
+                        "\n".join(str(x) for x in value.get("include_terms") or []), lines, area=True, height=90, help=help_text)
             ceiling = cadence_ceiling(value, draft)
             shown = max(8, min(ceiling, number(value.get("cadence_minutes")) or 30))
             cadence = st.number_input("Check every (minutes)", min_value=8, max_value=ceiling, step=1, value=shown, key=f"{key}_cadence",
@@ -673,11 +705,18 @@ def render_lanes(base, pin):
         if not sources:
             st.caption("No Radar sources yet. Sources you approve here are listed with their collection status.")
             return
+        sources = [s for s in sources if isinstance(s, dict)]
+        # 7-day counts: posts delivered and distinct URLs filtered out (the
+        # seed poll's archive not counted). The Worker omits them from every
+        # row when it cannot read the collector's tables, and sends null for a
+        # source outside the managed manifest.
+        counted = any("kept_7d" in s or "excluded_7d" in s for s in sources)
         st.dataframe(
             [{"Source": s.get("name") or s.get("key"), "Covered company": s.get("covered_entity_name") or "—",
               "Kind": str(s.get("relationship_kind") or "—").capitalize(), "Every (min)": s.get("cadence_minutes"),
-              "Status": s.get("status") or "—", "Last check": short_time(s.get("last_ok")), "Last article": short_time(s.get("last_article"))}
-             for s in sources if isinstance(s, dict)],
+              "Status": s.get("status") or "—", "Last check": short_time(s.get("last_ok")), "Last article": short_time(s.get("last_article")),
+              **({"Kept (7d)": count_text(s.get("kept_7d")), "Filtered (7d)": count_text(s.get("excluded_7d"))} if counted else {})}
+             for s in sources],
             hide_index=True,
         )
 

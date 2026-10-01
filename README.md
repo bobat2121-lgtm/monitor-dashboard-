@@ -51,7 +51,9 @@ obsidian black base, electric blue navigation and restrained copper-orange accen
   re-checks the newsroom and saves a new registry revision; anything decided
   in the last 24 hours can be undone. **With Claude** lists what is waiting
   for the next run, with Withdraw, and **Lane health** lists Radar's sources
-  with their collection status. Radar replaces the Universe tab: the map and
+  with their collection status and, when the Worker reports them, the posts
+  each kept and filtered out in the last 7 days (a new source's first-poll
+  archive not counted). Radar replaces the Universe tab: the map and
   the manual editors left the dashboard, and those changes are now asked for
   in words.
 
