@@ -13,8 +13,8 @@ obsidian black base, electric blue navigation and restrained copper-orange accen
   against them. Both tabs post the same row to the aggregator's `/grades`
   endpoint with the runtime PIN; nothing is stored in this repo.
 - Keyboard-accessible article disclosures and direct source links.
-- Existing Feed, Rejected and Universe navigation, owner feedback, API endpoints
-  and automatic refresh behavior are preserved.
+- Existing Feed and Rejected navigation, owner feedback, API endpoints and
+  automatic refresh behavior are preserved.
 - The visual system is isolated in `feed.css`; the native widget theme lives in
   `.streamlit/config.toml`. No extra runtime dependencies or remote fonts.
 
@@ -35,6 +35,25 @@ obsidian black base, electric blue navigation and restrained copper-orange accen
   **Monthly audit** (the 20-minute checklist with the audit and focus form)
   and **How to grade** (the grading principles). The two guide pages are
   served by the aggregator from its runbook files, so they never drift.
+- **Radar** (Owner PIN) — every change to what the Universe collects, signed
+  off here. **New request** in your own words (track a company or
+  relationship, or paste the link of a story we missed); the scheduled Claude
+  Radar Scout drafts a card at its next run (1:30 PM and 8:30 PM ET) and adds
+  its own from deal news and newsroom gaps. Each card shows its lane
+  (**Relationship source**, **Company newsroom** for a company's own
+  newsroom, or **Discovery lane**) and action, why, and the evidence (a live
+  probe of the newsroom, with when it ran, and a backtest of the names
+  against past items, with the matches that also name a guard word and
+  samples); approve it, edit its source, record or company fields in
+  Details (which also show, read-only, whether the source will be collected,
+  its company status and the release stored as evidence), send it back with
+  a note, or discard it. Approval
+  re-checks the newsroom and saves a new registry revision; anything decided
+  in the last 24 hours can be undone. **With Claude** lists what is waiting
+  for the next run, with Withdraw, and **Lane health** lists Radar's sources
+  with their collection status. Radar replaces the Universe tab: the map and
+  the manual editors left the dashboard, and those changes are now asked for
+  in words.
 
 Data comes from a public read-only JSON endpoint (`/digests`) served by a
 Cloudflare Worker. Ranking and editorial summaries are produced by the

@@ -10,7 +10,7 @@ import os
 import sys
 
 # Dependencies first: rules_view imports calibration_view lazily.
-LOCAL_MODULES = ("dashboard_utils", "calibration_view", "grading_ui", "universe_view", "rules_view")
+LOCAL_MODULES = ("dashboard_utils", "calibration_view", "grading_ui", "rules_view", "radar_view")
 
 
 def _mtime(module):

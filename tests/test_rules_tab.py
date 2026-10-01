@@ -202,7 +202,7 @@ class RulesTabTests(unittest.TestCase):
     def test_navigation_has_no_separate_calibration_view(self):
         app = self.start()
         view = next(radio for radio in app.radio if radio.label == "Dashboard view")
-        self.assertEqual(list(view.options), ["Feed", "Rejected", "Rules", "Universe"])
+        self.assertEqual(list(view.options), ["Feed", "Rejected", "Rules", "Radar"])
 
     def test_pin_gate_makes_no_owner_calls(self):
         app = self.start(pin="")

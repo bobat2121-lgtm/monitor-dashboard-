@@ -49,22 +49,30 @@ html, body, button, input, textarea, [data-testid="stAppViewContainer"] {
 [data-testid="stHorizontalBlock"]:has([aria-label="Dashboard view"]) [data-testid="stPopover"] > button > svg { display:none; }
 [data-testid="stRadio"]:has([aria-label="Dashboard view"]) { width:100% !important; }
 [data-testid="stElementContainer"]:has(> [data-testid="stRadio"] [aria-label="Dashboard view"]) { width:100% !important; align-self:stretch; }
-[role="radiogroup"][aria-label="Dashboard view"] [data-testid="stRadioOption"] > div > div > div:not([data-testid]) { display:none; }
+/* The view radio as equal-width tabs. Streamlit 1.37 (Base Web) puts each
+   option's <label> straight in the group; newer releases (React Aria) wrap it
+   in a field <div>. So the group's children are the tabs, the label is matched
+   anywhere inside, and a small gap keeps labels apart if a rule misses. */
 [role="radiogroup"][aria-label="Dashboard view"] {
-  display:flex; gap:0; flex-wrap:nowrap; width:100%;
+  display:flex; gap:4px; flex-wrap:nowrap; width:100%;
   padding:0; margin:0; border:0;
   background:transparent; border-radius:0;
 }
-[role="radiogroup"][aria-label="Dashboard view"] > label {
-  display:flex; flex:1 1 0; align-items:center; justify-content:center; min-width:0; box-sizing:border-box; text-align:center;
+[role="radiogroup"][aria-label="Dashboard view"] > * { flex:1 1 0; min-width:0; margin:0 !important; }
+[role="radiogroup"][aria-label="Dashboard view"] label {
+  position:relative; display:flex; align-items:center; justify-content:center; min-width:0; box-sizing:border-box; text-align:center;
   margin:0 !important; padding:0 8px; height:44px;
   border-bottom:2px solid transparent; border-radius:0; gap:0;
 }
-[role="radiogroup"][aria-label="Dashboard view"] > label:has(input:checked) {
+[role="radiogroup"][aria-label="Dashboard view"] label:has(input:checked) {
   border-bottom-color:var(--digest-blue); color:var(--digest-text);
 }
-[role="radiogroup"][aria-label="Dashboard view"] > label[data-baseweb="radio"] > div:first-child { position:absolute; opacity:0; width:1px; height:1px; overflow:hidden; }
-[role="radiogroup"][aria-label="Dashboard view"] label p { font-size:15px; font-weight:600; letter-spacing:.2px; }
+/* The radio dot: the label's first <div> in Base Web; the first <div> of the
+   label's row in React Aria (the text beside it is a stMarkdownContainer). */
+[role="radiogroup"][aria-label="Dashboard view"] label[data-baseweb="radio"] > div:first-child,
+[role="radiogroup"][aria-label="Dashboard view"] label[data-testid="stRadioOption"] > div > div:first-child:not([data-testid]) { position:absolute; opacity:0; width:1px; height:1px; overflow:hidden; }
+[role="radiogroup"][aria-label="Dashboard view"] label[data-baseweb="radio"] > div { padding-inline:0; }
+[role="radiogroup"][aria-label="Dashboard view"] label p { font-size:15px; font-weight:600; letter-spacing:.2px; white-space:nowrap; }
 [role="radiogroup"][aria-label="Dashboard view"] label:has(input:focus-visible) { outline:2px solid var(--digest-blue); outline-offset:4px; }
 [data-testid="stTextInput"]:has(input[aria-label="Search published stories"]) { margin: .3rem 0 1rem; }
 [data-testid="stTextInput"] input { font-size:13px; }
@@ -163,7 +171,10 @@ html, body, button, input, textarea, [data-testid="stAppViewContainer"] {
   [data-testid="stVerticalBlock"]:has(> [data-testid="stElementContainer"] .digest-grading-title) { padding:19px; }
   .edition-kicker { gap:6px; font-size:9px; }
   .rejected-item { grid-template-columns:42px minmax(0,1fr); padding:17px; gap:10px; }
-  [role="radiogroup"][aria-label="Dashboard view"] > label { padding-inline:2px; }
+  /* Too narrow for equal tabs: each takes its label's width plus a share of the rest. */
+  [role="radiogroup"][aria-label="Dashboard view"] { gap:2px; }
+  [role="radiogroup"][aria-label="Dashboard view"] > * { flex:1 1 auto; }
+  [role="radiogroup"][aria-label="Dashboard view"] label { padding-inline:2px; }
   [role="radiogroup"][aria-label="Dashboard view"] label p { font-size:13px; }
   [data-testid="stHorizontalBlock"]:has([aria-label="Dashboard view"]) [data-testid="stPopover"] > button { padding-inline:4px; }
 }
@@ -219,3 +230,11 @@ html, body, button, input, textarea, [data-testid="stAppViewContainer"] {
 .loop-kind { font:10px/1 var(--font-mono); letter-spacing:1px; text-transform:uppercase; padding:4px 7px; border-radius:4px; border:1px solid; }
 .loop-kind-rule { color:#87b4ff; border-color:#2c4a7a; background:var(--digest-blue-soft); }
 .loop-kind-item { color:#e8c170; border-color:#46391b; background:#241f12; }
+
+/* Radar tab: lane chips beside the Rules tab's vocabulary */
+/* Markdown blocks end with a -1rem margin meant for a closing <p>; these end in a <div>. */
+.radar-body { padding-bottom:1rem; }
+.loop-kind-relationship { color:#87b4ff; border-color:#2c4a7a; background:var(--digest-blue-soft); }
+.loop-kind-discovery { color:#e8c170; border-color:#46391b; background:#241f12; }
+.loop-kind-newsroom { color:#8fd19e; border-color:#2f5a3a; background:#13231a; }
+.refine-chip.applied { color:#8fbbff; border-color:#29476f; }
