@@ -20,8 +20,8 @@ import module_refresh
 # cached; reload any local module whose file changed before importing from it.
 module_refresh.refresh()
 
-from universe_view import render_universe
 from rules_view import render_rules_view
+from radar_view import render_radar_view
 from grading_ui import (
     FORM_ANCHOR,
     context_table,
@@ -666,7 +666,7 @@ def render_dashboard(view):
     elif view == "Rules":
         render_rules_view(WORKER_URL)
     else:
-        render_universe(WORKER_URL)
+        render_radar_view(WORKER_URL)
 
 
 
@@ -678,7 +678,7 @@ def render_live_dashboard(view):
 navigation, search_control, owner_control = st.columns([3, 1, 1], gap="small", vertical_alignment="center")
 with navigation:
     view = st.radio(
-        "Dashboard view", ["Feed", "Rejected", "Rules", "Universe"], horizontal=True,
+        "Dashboard view", ["Feed", "Rejected", "Rules", "Radar"], horizontal=True,
         label_visibility="collapsed", key="dashboard_view",
     )
 with search_control:
@@ -688,7 +688,7 @@ with search_control:
 with owner_control:
     render_owner_panel(None)
 # Owner editing has no periodic rerun: unsaved form values remain stable.
-if view in ("Universe", "Rules"):
+if view in ("Radar", "Rules"):
     render_dashboard(view)
 else:
     render_live_dashboard(view)

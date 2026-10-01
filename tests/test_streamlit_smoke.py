@@ -124,9 +124,16 @@ class StreamlitStartupTests(unittest.TestCase):
             self.assertIn("Air Force &lt;accelerates&gt;", "\n".join(m.value for m in app.markdown))
 
             view = next(radio for radio in app.radio if radio.label == "Dashboard view")
+            self.assertEqual(list(view.options), ["Feed", "Rejected", "Rules", "Radar"])
             view.set_value("Rejected")
             app.run(timeout=30)
             self.assertEqual(list(app.exception), [])
+
+            # Radar is owner-only: without a PIN it asks for one and calls nothing.
+            next(radio for radio in app.radio if radio.label == "Dashboard view").set_value("Radar")
+            app.run(timeout=30)
+            self.assertEqual(list(app.exception), [])
+            self.assertIn("Enter your Grader PIN in Owner mode", "\n".join(m.value for m in app.markdown))
 
 
 if __name__ == "__main__":
