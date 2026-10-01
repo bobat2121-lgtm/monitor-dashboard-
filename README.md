@@ -45,7 +45,9 @@ obsidian black base, electric blue navigation and restrained copper-orange accen
   served by the aggregator from its runbook files, so they never drift.
 - **Radar** (Owner PIN) — every change to what the Universe collects, signed
   off here. **New request** in your own words (track a company or
-  relationship, or paste the link of a story we missed); the scheduled Claude
+  relationship, or a story we missed: its link is required, and Claude
+  checks whether we collected it and why it was missed, from no source, a
+  filter, a broken source or a low ranking); the scheduled Claude
   Radar Scout drafts a card at its next run (1:30 PM and 8:30 PM ET) and adds
   its own from deal news and newsroom gaps. Each card shows its lane
   (**Relationship source**, **Company newsroom** for a company's own
@@ -63,13 +65,29 @@ obsidian black base, electric blue navigation and restrained copper-orange accen
   relationship source the card names), **Extend 21 days** or **Retire**
   (paused); Claude's pick is highlighted. To change the pick, send it back
   with a note; it has no Discard, and no Withdraw while it is with Claude,
-  so the verdict stays due until you pick one. **With Claude** lists what is waiting
+  so the verdict stays due until you pick one. A **Start trial** card also
+  lists the evidence the Worker verified (misses in the last 30 days, unique
+  catches, and per story when it was first seen elsewhere, whether and how
+  late a source collected it, and whether you reported or graded it). A
+  **Missed story** card answers your missed-story request when we collected
+  the story but the Grader ranked it low: it says in plain words when it was
+  collected, as which event, and what the Grader did (with the event's link
+  when it was matched by title). **Send to Rules** files a Rules draft
+  about that event (your optional words, else your request's, plus the
+  event and the Grader's call; it shows on the Rules tab as "from Radar
+  (missed story)"); **Discard** drops it. Undoing a Send to Rules within 24
+  hours withdraws the Rules draft while it is still pending; once it was
+  decided on the Rules tab, undo it there. **With Claude** lists what is waiting
   for the next run, with Withdraw, and **Lane health** lists Radar's sources
   with their collection status and, when the Worker reports them, the posts
   each kept and filtered out in the last 7 days (a new source's first-poll
   archive not counted), then a **Trial sources** table (trial day, items
   shown in the panel, average grade, grades of 70+ and below 40, unique
-  catches, duplicates, posts collected). Radar replaces the Universe tab: the map and
+  catches, duplicates, posts collected), then **Recall by industry (30
+  days)**: for each industry, the last evening recall audit (the 8:30 PM run
+  audits a third of the industries each night), the stories it found, how
+  many we captured (late catches included), how many late, and the recall
+  percentage. Radar replaces the Universe tab: the map and
   the manual editors left the dashboard, and those changes are now asked for
   in words.
 

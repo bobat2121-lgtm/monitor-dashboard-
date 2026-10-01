@@ -7,9 +7,10 @@ from unittest.mock import patch
 import streamlit as st
 from streamlit.testing.v1 import AppTest
 
-from radar_view import (EXTRA_NAMES_FIELD, TOPIC_FILTER_FIELD, average_text, cadence_ceiling, chips_html, classify, count_text, effects_html,
-                        evidence_html, facts_html, history_html, include_terms_field, md_escape, next_pickup_label, recent_label, sample_count,
-                        samples_html, sent_words, short_time, split_aliases, trial_day, trial_html)
+from radar_view import (EXTRA_NAMES_FIELD, MISSED_CAPTION, TOPIC_FILTER_FIELD, average_text, cadence_ceiling, chips_html, classify, count_text,
+                        effects_html, evidence_html, facts_html, history_html, include_terms_field, md_escape, missed_story_html, next_pickup_label,
+                        percent_text, recall_rows, recent_label, sample_count, samples_html, sent_words, short_time, split_aliases,
+                        start_trial_evidence_html, trial_day, trial_html)
 
 
 APP_PATH = Path(__file__).resolve().parents[1] / "streamlit_app.py"
@@ -150,6 +151,34 @@ TRIAL_LANE = {"key": "managed_beta", "name": "Beta Corp newsroom", "endpoint": "
               "status": "Collecting", "last_ok": "2026-09-30T17:00:00Z", "last_article": "2026-09-30T15:00:00Z", "fail_count": 0, "last_error": None,
               "trial": {"day": 25, "of_days": 21, "shown": 4, "avg_grade": 61.5, "grades_70_plus": 2, "grades_below_40": 1, "unique_catches": 9,
                         "duplicates": 3, "collected": 12, "last_article": "2026-09-30T15:00:00Z"}}
+# The discovery lane (contract P4.6, P4.8): the answer to a missed-story
+# request whose story was collected but ranked low, with the diagnosis the
+# Worker stamps from its own match and review read.
+DIAGNOSIS = {"code": "collected_rejected", "event_id": 4512, "event_title": "Navy orders Skydio X10D drones", "event_url": "https://news.example/skydio-navy",
+             "matched_by": "url", "collected_at": "2026-09-29T14:05:00Z", "decision": "rejected", "score": 35, "reason_code": "below_materiality",
+             "canonical_event_id": None, "run_id": "run-2026-09-29", "post_id": None}
+MISSED_STORY = draft(70, origin="owner", lane="discovery", action="missed_story", owner_text="We missed the Navy's Skydio order",
+                     owner_url="https://news.example/skydio-navy", proposal={
+                         "lane": "discovery", "action": "missed_story", "title": "Missed: Navy orders Skydio X10D drones",
+                         "why": "Collected, but the Grader ranked it below materiality.", "covered_entity_id": None, "counterpart": None,
+                         "relationship_kind": None, "dedupe_key": "missed:news.example/skydio-navy", "operations": [], "diagnosis": DIAGNOSIS})
+# A start_trial's gate evidence as the Worker stores it (contract P4.5): a
+# story you reported nobody collected, one collected 6.5 hours late that you
+# graded 78 in the trial panel, and one a source collected first.
+EVIDENCE = {"verified": True, "verified_at": "2026-10-01T00:40:00Z", "window_days": 30, "counted": 2, "unique_catches": 1, "misses": [
+    {"url": "https://beta.example/news/x9", "first_seen_elsewhere": "2026-09-28T14:00:00Z", "collected_at": None, "lead_hours": None, "late": False,
+     "counted": True, "diagnosis": "not_collected_no_source", "owner_request_id": 44, "owner_flagged": True, "owner_grade": None},
+    {"url": "https://beta.example/news/y2", "first_seen_elsewhere": "2026-09-20T12:00:00Z", "collected_at": "2026-09-20T18:30:00Z", "lead_hours": 6.5,
+     "late": True, "counted": True, "diagnosis": "collected_rejected", "owner_request_id": None, "owner_flagged": False, "owner_grade": 78},
+    {"url": "https://beta.example/news/z1", "first_seen_elsewhere": "2026-09-18T12:00:00Z", "collected_at": "2026-09-18T11:00:00Z", "lead_hours": -1,
+     "late": False, "counted": False, "diagnosis": "collected_published", "owner_request_id": None, "owner_flagged": False, "owner_grade": None}]}
+# Lane health recall by industry (contract P4.3): one audited industry and
+# one the rotation has not reached yet.
+RECALL = [{"industry_id": "autonomous_vehicles", "name": "Autonomous vehicles", "last_audit_date": "2026-09-30", "found_30d": 12, "captured_30d": 10,
+           "late_30d": 2, "recall_pct": 83},
+          {"industry_id": "drones", "name": "Drones & UAS", "last_audit_date": None, "found_30d": None, "captured_30d": None, "late_30d": None,
+           "recall_pct": None}]
+RECALL_COLUMNS = ["Industry", "Last audit", "Found", "Captured", "Late", "Recall"]
 
 
 class RadarTabTests(unittest.TestCase):
@@ -160,8 +189,13 @@ class RadarTabTests(unittest.TestCase):
         self.drafts = [NEW_SOURCE, NO_CHANGE, REQUEST, SENT_BACK]
         self.recent = RECENT
         self.lanes = LANES
+        self.recall = None
         self.approve_error = None
         self.approve_label = None
+        self.request_error = None
+        self.to_rules = {"rules_draft_id": 88, "duplicate": False}
+        self.to_rules_error = None
+        self.undo_result = None
         get_patch = patch("requests.get", side_effect=self.fake_get)
         get_patch.start(); self.addCleanup(get_patch.stop)
         post_patch = patch("requests.post", side_effect=self.fake_post)
@@ -180,7 +214,8 @@ class RadarTabTests(unittest.TestCase):
                 "your_turn": len([d for d in self.drafts if d["refine_status"] == "proposed"]),
                 "with_claude": len([d for d in self.drafts if d["refine_status"] == "queued"])}})
         if url.endswith("/radar/lanes"):
-            return StubResponse({"ok": True, "revision_id": "rev-7", "sources": self.lanes})
+            return StubResponse({"ok": True, "revision_id": "rev-7", "sources": self.lanes,
+                                 **({"recall": self.recall} if self.recall is not None else {})})
         raise AssertionError(f"unexpected request: {url}")
 
     def fake_post(self, url, **kwargs):
@@ -188,8 +223,16 @@ class RadarTabTests(unittest.TestCase):
         self.calls.append(("POST", url, body))
         self.assertEqual(kwargs.get("headers"), {"X-Owner-Pin": "test-pin"})
         if url.endswith("/radar/drafts"):
+            if self.request_error:
+                return StubResponse({"ok": False, "error": self.request_error}, 400)
             return StubResponse({"ok": True, "draft_id": 31, "duplicate": False})
         draft_id = int(url.split("/")[-2])
+        if url.endswith("/to-rules"):
+            if self.to_rules_error:
+                return StubResponse({"ok": False, "error": self.to_rules_error[1]}, self.to_rules_error[0])
+            return StubResponse({"ok": True, "draft_id": draft_id, "label": f"Radar #{draft_id}: Missed story", **self.to_rules})
+        if url.endswith("/undo") and self.undo_result:
+            return StubResponse(self.undo_result[1], self.undo_result[0])
         if url.endswith("/approve"):
             if self.approve_error:
                 return StubResponse({"ok": False, "error": self.approve_error}, 422)
@@ -873,6 +916,235 @@ class RadarTabTests(unittest.TestCase):
         self.assertEqual((cadence.value, cadence.max), (60, 60))
         self.assertIn("Lane: discovery trial (21 days; dates set on approval)", self.rendered(app))
         self.assertEqual(app.text_area("radar_51_op0_include").label, TOPIC_FILTER_FIELD[0])
+
+    # ------------------------------------------------------------ discovery lane
+
+    def test_a_missed_story_diagnosis_reads_in_plain_words(self):
+        def card(**fields):
+            return draft(70, action="missed_story", proposal={**MISSED_STORY["proposal"], "diagnosis": {**DIAGNOSIS, **fields}})
+        self.assertEqual(missed_story_html(MISSED_STORY), '<div class="rule-meta">Collected Sep 29, 10:05 AM ET as event 4512; '
+                                                          'the Grader rejected it (score 35, below materiality)</div>')
+        self.assertIn("as event 4512; the Grader marked it a duplicate of event 4400</div>",
+                      missed_story_html(card(code="collected_rejected", decision="duplicate", score=None, reason_code=None, canonical_event_id=4400)))
+        self.assertIn("as event 4512; the Grader selected it, but the edition did not publish it</div>",
+                      missed_story_html(card(decision="selected", score=82, reason_code="material")))
+        self.assertIn("as event 4512; no Grader run has reviewed it yet</div>",
+                      missed_story_html(card(code="collected_unreviewed", decision=None, score=None, reason_code=None, run_id=None)))
+        self.assertIn("the Grader rejected it (score 35)</div>", missed_story_html(card(reason_code=None)))
+        self.assertIn("the Grader rejected it (not my focus)</div>", missed_story_html(card(score="35", reason_code="not_my_focus")))
+        # A story matched by its title links the collected event, so the owner
+        # can check it is the same story; Worker-stored text stays escaped and
+        # on one line, an unreadable time included.
+        titled = missed_story_html(card(matched_by="title", event_title="Navy <b>orders</b>" + IMAGE, event_url="https://news.example/navy-x10d",
+                                        collected_at="not a time <i>"))
+        self.assertIn('<div class="rule-meta">Collected not a time &lt;i&gt; as event 4512; ', titled)
+        self.assertIn('<div class="rule-meta">Matched by title: <a href="https://news.example/navy-x10d" target="_blank" rel="noopener noreferrer">'
+                      'Navy &lt;b&gt;orders&lt;/b&gt; ![x](https://attacker.example/p.png)</a></div>', titled)
+        self.assertNotIn("\n", titled)
+        self.assertNotIn("Matched by title", missed_story_html(MISSED_STORY))
+        self.assertIn("Matched by title: javascript:alert(1)</div>", missed_story_html(card(matched_by="title", event_title=None, event_url="javascript:alert(1)")),
+                      "anything but http(s) stays plain text")
+        self.assertEqual(missed_story_html(card(event_id="x", collected_at=None, decision=None)), '<div class="rule-meta">Collected; no Grader run has reviewed it yet</div>')
+        self.assertEqual(missed_story_html(draft(70, action="missed_story", proposal={"action": "missed_story", "diagnosis": "corrupt"})), "")
+
+    def test_a_missed_story_card_offers_send_to_rules_and_discard_only(self):
+        self.drafts = [MISSED_STORY]
+        app = self.start()
+        rendered = self.rendered(app)
+        self.assertIn('<span class="loop-kind loop-kind-discovery">Discovery lane</span><span class="refine-chip">Missed story</span>', rendered)
+        self.assertIn("Collected Sep 29, 10:05 AM ET as event 4512; the Grader rejected it (score 35, below materiality)", rendered)
+        buttons = {b.key: b for b in app.button}
+        self.assertEqual((buttons["radar_torules_70"].label, buttons["radar_torules_70"].proto.type), ("Send to Rules", "primary"))
+        self.assertEqual(buttons["radar_discard_70"].label, "Discard")
+        self.assertFalse([k for k in buttons if str(k).startswith(("radar_sendback_", "radar_approve_"))], "no Approve and no Send back")
+        self.assertEqual(app.text_input("radar_note_70").label, "Your words for Rules (optional)")
+        self.assertEqual(self.posts(), [])
+
+    def test_a_missed_story_card_shows_no_operation_fields(self):
+        self.drafts = [MISSED_STORY]
+        app = self.start()
+        app.toggle("radar_details_70").set_value(True).run()
+        self.assertEqual(list(app.exception), [])
+        fields = [w.key for w in (*app.text_input, *app.text_area, *app.number_input)]
+        self.assertEqual([k for k in fields if str(k).startswith("radar_70_op")], [])
+        self.assertIn('Your link: <a href="https://news.example/skydio-navy"', self.rendered(app))
+
+    def test_send_to_rules_posts_the_note_only_when_given(self):
+        self.drafts = [MISSED_STORY]
+        # One click per session (Streamlit 1.37 AppTest).
+        for note, body in (("", {}), ("   ", {}), ("  Navy orders are material  ", {"text": "Navy orders are material"})):
+            with self.subTest(note=note):
+                app = self.start()
+                if note:
+                    app.text_input("radar_note_70").set_value(note)
+                app.button("radar_torules_70").click().run()
+                self.assertEqual(list(app.exception), [])
+                url, sent = self.posts()[-1][1:]
+                self.assertTrue(url.endswith("/radar/drafts/70/to-rules"), url)
+                self.assertEqual(sent, body)
+                self.assertEqual([s.value for s in app.success], ["Sent to Rules as draft #88"])
+        self.assertEqual(len(self.posts()), 3)
+
+    def test_send_to_rules_says_when_the_rules_draft_already_exists(self):
+        self.drafts = [MISSED_STORY]
+        self.to_rules = {"rules_draft_id": 88, "duplicate": True}
+        app = self.start()
+        app.button("radar_torules_70").click().run()
+        self.assertEqual(list(app.exception), [])
+        self.assertEqual([s.value for s in app.success], ["Already in Rules as draft #88"])
+
+    def test_a_refused_send_to_rules_stays_on_the_card(self):
+        # An older aggregator answers 404; a second click while the first is
+        # filing, 409.
+        self.drafts = [MISSED_STORY]
+        self.to_rules_error = (404, "Not found.")
+        app = self.start()
+        app.button("radar_torules_70").click().run()
+        self.assertEqual(list(app.exception), [])
+        self.assertEqual([e.value for e in app.error], ["Not found."])
+        self.assertEqual(list(app.success), [])
+        self.assertTrue(any(b.key == "radar_torules_70" for b in app.button), "the card is still there")
+
+    def test_a_missed_story_can_be_discarded(self):
+        self.drafts = [MISSED_STORY]
+        app = self.start()
+        app.button("radar_discard_70").click().run()
+        self.assertEqual(list(app.exception), [])
+        url, body = self.posts()[-1][1:]
+        self.assertTrue(url.endswith("/radar/drafts/70/reject"))
+        self.assertEqual(body, {})
+        self.assertEqual([s.value for s in app.success], ["#70 discarded · undo within 24 h"])
+
+    def test_just_decided_names_a_missed_story_sent_to_rules(self):
+        sent = draft(71, status="approved", decided_at="2026-09-30T18:05:00Z", undo_available=True, lane="discovery", action="missed_story",
+                     result={"label": "Radar #71: Missed story", "rules_draft_id": 88}, proposal=MISSED_STORY["proposal"])
+        self.assertEqual(recent_label(sent), "Sent to Rules #71")
+        self.assertEqual(recent_label({**sent, "status": "rejected"}), "Discarded #71")
+        self.assertEqual(recent_label({**sent, "result": {"label": "Radar #71"}}), "Approved #71")
+        self.recent = [sent, *RECENT]
+        app = self.start()
+        rendered = self.rendered(app)
+        self.assertIn("Sent to Rules #71 · Sep 30, 2:05 PM ET", rendered)
+        self.assertIn("Approved #9 · ", rendered)
+        self.assertIn("radar_undo_71", {b.key for b in app.button})
+
+    def test_undo_withdraws_the_pending_rules_draft(self):
+        sent = draft(71, status="approved", decided_at="2026-09-30T18:05:00Z", undo_available=True, lane="discovery", action="missed_story",
+                     result={"label": "Radar #71: Missed story", "rules_draft_id": 88}, proposal=MISSED_STORY["proposal"])
+        self.recent = [sent]
+        # One click per session (Streamlit 1.37 AppTest).
+        for status, response, message in (
+                (200, {"ok": True, "draft_id": 71, "rules_draft_withdrawn": True}, ("success", "Undone · #71 is back in Radar · Rules draft #88 withdrawn")),
+                (409, {"ok": False, "error": "Rules draft #88 was already decided; undo it on the Rules tab."},
+                 ("error", "Rules draft #88 was already decided; undo it on the Rules tab."))):
+            with self.subTest(status=status):
+                self.undo_result = (status, response)
+                app = self.start()
+                app.button("radar_undo_71").click().run()
+                self.assertEqual(list(app.exception), [])
+                self.assertTrue(self.posts()[-1][1].endswith("/radar/drafts/71/undo"))
+                kind, text = message
+                self.assertEqual([m.value for m in getattr(app, kind)], [text])
+
+    def test_start_trial_evidence_shows_the_workers_values(self):
+        body = start_trial_evidence_html({"evidence": EVIDENCE})
+        link = '<a href="{0}" target="_blank" rel="noopener noreferrer">{0}</a>'.format
+        self.assertEqual(body, (
+            '<div class="rule-meta">2 misses in 30 days · 1 unique</div>'
+            f'<div class="rule-meta">{link("https://beta.example/news/x9")} · first seen elsewhere Sep 28, 10:00 AM ET · not collected · you reported it (#44)</div>'
+            f'<div class="rule-meta">{link("https://beta.example/news/y2")} · first seen elsewhere Sep 20, 8:00 AM ET · collected 7 h later · you graded it 78</div>'
+            f'<div class="rule-meta">{link("https://beta.example/news/z1")} · first seen elsewhere Sep 18, 8:00 AM ET · collected first</div>'))
+        def miss(**fields):
+            return start_trial_evidence_html({"evidence": {**EVIDENCE, "counted": 1, "misses": [{**EVIDENCE["misses"][1], **fields}]}})
+        self.assertIn("1 miss in 30 days · 1 unique", miss())
+        self.assertIn("collected 6 h later", miss(lead_hours=6.49), "rounded, not truncated")
+        self.assertIn("collected 13 h later", miss(lead_hours=12.5))
+        self.assertIn("collected under 1 h later", miss(lead_hours=0.3))
+        self.assertIn("collected first", miss(lead_hours=0))
+        self.assertIn("collected Sep 20, 2:30 PM ET", miss(lead_hours=None), "a lead the Worker could not compute")
+        self.assertIn("collected Sep 20, 2:30 PM ET", miss(lead_hours="6.5"))
+        self.assertIn("· you reported it (#44)</div>", miss(owner_flagged=True, owner_request_id=44, owner_grade=78), "reported, never 'graded'")
+        self.assertIn("· you reported it</div>", miss(owner_flagged=True, owner_request_id=None, owner_grade=None))
+        self.assertNotIn("you graded", miss(owner_grade=None))
+        self.assertNotIn("you graded", miss(owner_grade="78"))
+        hostile = miss(url="https://beta.example/a" + IMAGE, first_seen_elsewhere="soon <b>")
+        self.assertIn("first seen elsewhere soon &lt;b&gt;", hostile)
+        self.assertNotIn("\n", hostile)
+        self.assertIn("0 misses in 30 days · 0 unique</div>", start_trial_evidence_html({"evidence": {"misses": "lots"}}), "malformed lists show nothing")
+        for absent in ({}, {"evidence": None}, {"evidence": "verified"}, {"evidence": []}):
+            self.assertEqual(start_trial_evidence_html(absent), "", "a phase-3 card without evidence")
+
+    def test_a_start_trial_card_shows_its_evidence_below_the_probe(self):
+        probed = {**START_TRIAL["proposal"], "probe": {"total_found": 12, "excluded": {}, "checked_at": "2026-09-30T17:35:00Z"}}
+        self.drafts = [{**START_TRIAL, "proposal": {**probed, "evidence": EVIDENCE}}, {**START_TRIAL, "id": 52, "proposal": probed}]
+        app = self.start()
+        cards = [m.value for m in app.markdown if "Probe: 12 posts" in m.value]
+        self.assertEqual(len(cards), 2)
+        self.assertLess(cards[0].index("Probe: 12 posts · 0 excluded · checked Sep 30, 1:35 PM ET"), cards[0].index("2 misses in 30 days · 1 unique"))
+        self.assertIn("you reported it (#44)", cards[0])
+        self.assertNotIn("misses in", cards[1], "a phase-3 card without evidence renders as before")
+        self.assertTrue({"radar_approve_51", "radar_sendback_51", "radar_discard_51"} <= {b.key for b in app.button})
+
+    def test_recall_rows_are_text_with_dashes_before_an_audit(self):
+        self.assertEqual(recall_rows(RECALL), [
+            {"Industry": "Autonomous vehicles", "Last audit": "Sep 30", "Found": "12", "Captured": "10", "Late": "2", "Recall": "83%"},
+            {"Industry": "Drones & UAS", "Last audit": "—", "Found": "—", "Captured": "—", "Late": "—", "Recall": "—"}])
+        self.assertEqual(recall_rows([RECALL[1]]), [], "no audit yet")
+        self.assertEqual(recall_rows("corrupt"), [])
+        self.assertEqual([percent_text(v) for v in (83, 82.5, 0, None, True, "83")], ["83%", "83%", "0%", "—", "—", "—"])
+        self.assertEqual(recall_rows([{**RECALL[0], "name": None, "found_30d": 0, "captured_30d": 0, "late_30d": 0, "recall_pct": None}])[0],
+                         {"Industry": "autonomous_vehicles", "Last audit": "Sep 30", "Found": "0", "Captured": "0", "Late": "0", "Recall": "—"})
+
+    def test_lane_health_shows_recall_without_any_radar_source(self):
+        self.lanes, self.recall = [], RECALL
+        app = self.start()
+        captions = [c.value for c in app.caption]
+        self.assertIn("No Radar sources yet. Sources you approve here are listed with their collection status.", captions)
+        self.assertLess(captions.index("No Radar sources yet. Sources you approve here are listed with their collection status."),
+                        captions.index("Recall by industry (30 days)"))
+        self.assertEqual(len(app.dataframe), 1)
+        table = app.dataframe[0].value
+        self.assertEqual(list(table.columns), RECALL_COLUMNS)
+        self.assertEqual(table.values.tolist(), [["Autonomous vehicles", "Sep 30", "12", "10", "2", "83%"], ["Drones & UAS", "—", "—", "—", "—", "—"]])
+
+    def test_lane_health_shows_recall_after_the_trial_table(self):
+        self.lanes, self.recall = [{**LANES[0], "trial": None}, TRIAL_LANE], RECALL
+        app = self.start()
+        self.assertEqual(len(app.dataframe), 3)
+        self.assertEqual(app.dataframe[0].value.iloc[0].tolist()[0], "Acme Robotics newsroom", "the main table stays first")
+        self.assertEqual(list(app.dataframe[1].value.columns)[:2], ["Source", "Day"], "then the trial table")
+        self.assertEqual(list(app.dataframe[2].value.columns), RECALL_COLUMNS)
+        captions = [c.value for c in app.caption]
+        self.assertLess(captions.index("Trial sources"), captions.index("Recall by industry (30 days)"))
+
+    def test_lane_health_says_when_no_industry_was_audited(self):
+        self.recall = [RECALL[1], {**RECALL[1], "industry_id": "humanoids", "name": "Humanoids"}]
+        app = self.start()
+        captions = [c.value for c in app.caption]
+        self.assertIn("No recall audit yet; the 8:30 PM run audits a third of the industries each night.", captions)
+        self.assertNotIn("Recall by industry (30 days)", captions)
+        self.assertEqual(len(app.dataframe), 1, "only the sources table")
+        self.recall = []
+        app = self.start()
+        self.assertFalse([c.value for c in app.caption if "ecall" in c.value], "an empty recall shows nothing")
+
+    def test_composer_explains_the_missed_story_link(self):
+        app = self.start()
+        self.assertIn(MISSED_CAPTION, [c.value for c in app.caption])
+        self.assertEqual(MISSED_CAPTION, "For a missed story, paste its link: at its next run Claude checks whether we collected it and why it was missed "
+                                         "(no source, a filter, a broken source or a low ranking), and answers with a card.")
+        self.assertEqual(app.text_input("radar_url").label, "Link (required for a missed story)")
+
+    def test_composer_shows_a_worker_refusal_inline(self):
+        self.request_error = "The link must be an http(s) URL."
+        app = self.start()
+        app.radio("radar_kind").set_value("We missed this story")
+        app.text_area("radar_text").set_value("The Navy's Skydio order never reached the digest")
+        app.text_input("radar_url").set_value("https://news example/skydio")
+        self.composer_submit(app)
+        self.assertEqual(self.posts()[-1][2], {"text": "The Navy's Skydio order never reached the digest", "kind": "missed", "url": "https://news example/skydio"})
+        self.assertEqual([e.value for e in app.error], ["The link must be an http(s) URL."])
+        self.assertEqual(list(app.success), [])
 
 
 if __name__ == "__main__":

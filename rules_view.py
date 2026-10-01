@@ -149,6 +149,9 @@ def draft_origin(draft) -> str:
         return f"revision of {draft['target_rule_id']}"
     if run_id == "owner":
         return "written here"
+    if run_id == "radar":
+        # A missed story the owner sent to Rules from a Radar card.
+        return "from Radar (missed story)"
     if not run_id:
         return "from a grade"
     return run_id
@@ -171,6 +174,15 @@ def sort_rules(rules):
 
 def normalized(text) -> str:
     return " ".join(str(text or "").split())
+
+
+def lines_html(text) -> str:
+    """Escaped draft text for an unsafe_allow_html block, on one source line.
+    A blank line ends a raw HTML block in Markdown and whatever follows
+    renders as Markdown (remote images, links); a Send to Rules draft puts a
+    web page's headline after one ("\\n\\nMissed story: <title>"). Each line
+    break becomes <br>, so the owner still sees the lines."""
+    return "<br>".join(html.escape(line) for line in ("" if text is None else str(text)).splitlines())
 
 
 def next_pickup_label(now=None) -> str:
@@ -317,9 +329,9 @@ def history_html(draft) -> str:
     rows = []
     for f in draft.get("owner_feedback") or []:
         if f.get("edit"):
-            rows.append(f'<div class="refine-note">You sent back (round {html.escape(str(f.get("round", "")))}): {html.escape(str(f["edit"]))}</div>')
+            rows.append(f'<div class="refine-note">You sent back (round {html.escape(str(f.get("round", "")))}): {lines_html(f["edit"])}</div>')
         if f.get("text"):
-            rows.append(f'<div class="refine-note">Your note (round {html.escape(str(f.get("round", "")))}): {html.escape(str(f["text"]))}</div>')
+            rows.append(f'<div class="refine-note">Your note (round {html.escape(str(f.get("round", "")))}): {lines_html(f["text"])}</div>')
     return "".join(rows)
 
 
@@ -369,7 +381,7 @@ def render_card(base, pin, draft, status):
         if details:
             st.markdown(
                 f'<div class="refine-label">{"The rule now" if target else "Your words"}</div>'
-                f'<div class="refine-owner">{html.escape(str(draft.get("raw_text") or draft.get("text") or ""))}</div>'
+                f'<div class="refine-owner">{lines_html(draft.get("raw_text") or draft.get("text") or "")}</div>'
                 + history_html(draft),
                 unsafe_allow_html=True,
             )
@@ -423,7 +435,7 @@ def render_drop_card(base, pin, draft):
     with st.container(border=True):
         st.markdown(card_header(draft, f"ChatGPT proposes dropping {subject}"), unsafe_allow_html=True)
         st.markdown(
-            f'<div class="refine-owner">{html.escape(str(draft.get("raw_text") or draft.get("text") or ""))}</div>'
+            f'<div class="refine-owner">{lines_html(draft.get("raw_text") or draft.get("text") or "")}</div>'
             '<div class="refine-label" style="margin-top:10px">Why ChatGPT would drop it</div>'
             f'<div class="rule-text">{html.escape(str(proposal.get("rationale") or ""))}</div>'
             + ('<div class="refine-chips">' + "".join(chips) + "</div>" if chips else ""),
@@ -452,7 +464,7 @@ def render_waiting_row(base, pin, draft, pinned: bool):
         text_col, button_col = st.columns([6, 1])
         text_col.markdown(
             card_header(draft, f"with ChatGPT · back {next_pickup_label()}")
-            + f'<div class="refine-owner">{"You sent: " if pinned and sent else ""}{html.escape(words)}</div>',
+            + f'<div class="refine-owner">{"You sent: " if pinned and sent else ""}{lines_html(words)}</div>',
             unsafe_allow_html=True,
         )
         if button_col.button("Withdraw", key=f"withdraw_{draft_id}"):
