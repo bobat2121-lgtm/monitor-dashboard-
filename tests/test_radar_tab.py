@@ -332,16 +332,27 @@ class RadarTabTests(unittest.TestCase):
         # The Worker's label is Markdown-escaped; it renders as "Radar #12: …".
         self.assertTrue(any(s.value == f"Approved · Radar \\#12\\:​ {TITLE} · undo within 24 h" for s in app.success))
 
+        # Each step starts a fresh session: Streamlit 1.37's AppTest drops the
+        # next widget interaction inside a fragment after that fragment called
+        # st.rerun (the Rules tab's tests use one action per session too).
+        app = self.start()
         app.toggle("radar_details_12").set_value(True).run()
         self.assertEqual(app.text_input("radar_12_op1_endpoint").value, "https://acmerobotics.com/news")
         self.assertEqual(app.number_input("radar_12_op1_cadence").value, 30)
         self.assertEqual(app.number_input("radar_12_op1_cadence").max, 30, "a relationship source is checked every 8 to 30 minutes")
+        sent = len(self.posts())
         app.button("radar_approve_12").click().run()
+        self.assertEqual(len(self.posts()), sent + 1, "Approve posts again")
         self.assertEqual(self.posts()[-1][2], {}, "opening Details changes nothing")
+
+        app = self.start()
+        app.toggle("radar_details_12").set_value(True).run()
         app.text_input("radar_12_op1_endpoint").set_value("https://acmerobotics.com/press")
         app.text_area("radar_12_op1_include").set_value("Ondas\n\nAcme Robotics\n")
         app.number_input("radar_12_op1_cadence").set_value(20)
+        sent = len(self.posts())
         app.button("radar_approve_12").click().run()
+        self.assertEqual(len(self.posts()), sent + 1, "Approve posts the edits")
         operations = self.posts()[-1][2]["operations"]
         self.assertEqual(operations[0], KNOWLEDGE, "an untouched operation goes back exactly as written")
         expected = copy.deepcopy(SOURCE)
