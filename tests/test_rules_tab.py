@@ -8,7 +8,7 @@ from streamlit.testing.v1 import AppTest
 from calibration_view import delta_text, pct
 from datetime import datetime, timezone
 
-from rules_view import classify, draft_origin, effect_payload, effect_text, next_pickup_label, parse_signature, signature_value, sort_rules
+from rules_view import classify, draft_origin, effect_payload, effect_text, lines_html, next_pickup_label, parse_signature, signature_value, sort_rules
 
 
 APP_PATH = Path(__file__).resolve().parents[1] / "streamlit_app.py"
@@ -186,6 +186,8 @@ class RulesTabTests(unittest.TestCase):
         self.assertEqual(draft_origin({"run_id": None}), "from a grade")
         self.assertEqual(draft_origin({"run_id": "calibration-trend", "source_feedback_ids": [1, 2, 3]}), "from calibration · 3 grades")
         self.assertEqual(draft_origin({"run_id": "owner-revision", "target_rule_id": "R-0001"}), "revision of R-0001")
+        # A missed story the owner sent to Rules from a Radar card (contract P4.6).
+        self.assertEqual(draft_origin({"run_id": "radar", "event_id": 4512}), "from Radar (missed story)")
         # 6:45 PM ET -> the 6:50 PM edition pickup; 10 PM ET -> tomorrow's first one.
         self.assertEqual(next_pickup_label(datetime(2026, 9, 27, 22, 45, tzinfo=timezone.utc)), "~6:50 PM ET")
         self.assertEqual(next_pickup_label(datetime(2026, 9, 28, 2, 0, tzinfo=timezone.utc)), "tomorrow ~6:50 AM ET")
@@ -370,6 +372,31 @@ class RulesTabTests(unittest.TestCase):
         self.assertTrue(any("Dropped R-0034" in s.value for s in app.success))
         app.button("keep_42").click().run()
         self.assertTrue(self.posts()[-1][1].endswith("/rules/drafts/42/reject"))
+
+    def test_a_radar_draft_cannot_leave_its_html_block(self):
+        # Send to Rules (contract P4.6) files the owner's words, a blank line,
+        # then "Missed story:" and the collected page's headline: web content.
+        words = ("We missed this story\n\nMissed story: Navy <b>orders</b> ![x](https://attacker.example/p.png) [a link](https://phish.example/x) "
+                 "https://news.example/navy (event 4512; Grader rejected, score 35, below_materiality)")
+        waiting = proposed(61, words, None, status="queued", run_id="radar")
+        card = proposed(62, words, REWRITE, run_id="radar")
+        drop = proposed(63, words, None, run_id="radar")
+        drop["proposal"] = {"action": "drop", "rationale": "Too tied to one story to generalize.", "duplicate_of": None, "overlaps": [], "conflicts": [], "supersedes": None}
+        self.drafts = [waiting, card, drop]
+        app = self.start()
+        app.toggle("card_details_62").set_value(True).run()
+        self.assertEqual(list(app.exception), [])
+        hostile = [m.value for m in app.markdown if "attacker.example" in m.value]
+        self.assertEqual(len(hostile), 3, "waiting row, Details panel and drop card")
+        for value in hostile:
+            # A blank line would end the raw HTML block and let Markdown render
+            # the headline (a remote image, a live link); nothing spans lines.
+            self.assertNotIn("\n", value)
+            self.assertIn('<div class="refine-owner">We missed this story<br><br>Missed story: Navy &lt;b&gt;orders&lt;/b&gt; '
+                          "![x](https://attacker.example/p.png) [a link](https://phish.example/x) ", value)
+        self.assertIn("from Radar (missed story)", self.rendered(app))
+        self.assertEqual(lines_html("a <b>\r\n\r\n![x](u)\rc\n"), "a &lt;b&gt;<br><br>![x](u)<br>c")
+        self.assertEqual(lines_html(None), "")
 
     def test_anything_decided_in_the_last_day_can_be_undone(self):
         self.recent = [{"id": 37, "status": "approved", "precedent_rule_id": "R-0038", "decided_at": "2026-09-27T22:31:14.844Z", "undo": {"type": "superseded"}, "undo_available": True,
