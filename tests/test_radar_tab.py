@@ -7,10 +7,11 @@ from unittest.mock import patch
 import streamlit as st
 from streamlit.testing.v1 import AppTest
 
-from radar_view import (EXTRA_NAMES_FIELD, MISSED_CAPTION, TOPIC_FILTER_FIELD, average_text, cadence_ceiling, chips_html, classify, count_text,
-                        effects_html, evidence_html, facts_html, history_html, include_terms_field, md_escape, missed_story_html, next_pickup_label,
-                        percent_text, recall_rows, recent_label, sample_count, samples_html, sent_words, short_time, split_aliases,
-                        start_trial_evidence_html, trial_day, trial_html)
+from radar_view import (EXTRA_NAMES_FIELD, FAILURE_LABEL, MISSED_CAPTION, TOPIC_FILTER_FIELD, average_text, cadence_ceiling, chips_html, classify,
+                        count_text, coverage_rows, coverage_summary, effects_html, evidence_html, evidence_link, facts_html, failure_text, history_html,
+                        identity_html, identity_rows, include_terms_field, md_escape, missed_story_html, next_pickup_label, percent_text, recall_rows,
+                        recent_label, sample_count, samples_html, sent_words, short_time, split_aliases, start_trial_evidence_html, trial_day, trial_html,
+                        value_text)
 
 
 APP_PATH = Path(__file__).resolve().parents[1] / "streamlit_app.py"
@@ -179,6 +180,50 @@ RECALL = [{"industry_id": "autonomous_vehicles", "name": "Autonomous vehicles", 
           {"industry_id": "drones", "name": "Drones & UAS", "last_audit_date": None, "found_30d": None, "captured_30d": None, "late_30d": None,
            "recall_pct": None}]
 RECALL_COLUMNS = ["Industry", "Last audit", "Found", "Captured", "Late", "Recall"]
+# Phase 5 (contract P5.2, P5.10): Lane health's coverage by company. Swarmer
+# is graded C by its SEC filings while its blocked newsroom is failing; Beta
+# is graded A with nothing failing, so it stays out of the table.
+COVERAGE = {"summary": {"A": 120, "B": 10, "C": 26, "D": 5, "E": 0, "F": 141}, "rows": [
+    {"entity_id": "swarmer", "name": "Swarmer", "grade": "C",
+     "best_channel": {"rung": "C", "kind": "sec_filing", "key": "edgar_swarmer", "name": "Swarmer SEC filings", "status": "healthy"},
+     "failing": [{"rung": "A", "kind": "company_newsroom", "key": "managed_swarmer", "name": "Swarmer newsroom", "status": "failing",
+                  "failure_class": "blocked"}]},
+    {"entity_id": "beta", "name": "Beta Corp", "grade": "A", "best_channel": {"rung": "A", "kind": "company_newsroom", "name": "Beta newsroom"},
+     "failing": []},
+    {"entity_id": "ceva", "name": "Ceva Logistics", "grade": "F", "best_channel": None, "failing": [],
+     "review": {"status": "mentions_only", "checked_at": "2026-09-30T00:00:00Z", "reason": "No newsroom, filings or procurement records."}},
+    {"entity_id": "acme", "name": "Acme Robotics", "grade": "D", "best_channel": "D", "failing": [], "review": None},
+    {"entity_id": "zeta", "name": "Zeta <b>Systems</b>", "grade": "E", "best_channel": {"rung": "E", "kind": "industry_media", "key": "trial_zeta"},
+     "failing": 0, "review": "procurement_only"}]}
+COVERAGE_COLUMNS = ["Company", "Grade", "Best channel", "Failing", "Review"]
+COVERAGE_TABLE = [["Ceva Logistics", "F", "—", "—", "Mentions only · Sep 30"],
+                  ["Zeta <b>Systems</b>", "E", "E · trade press", "—", "Procurement only"],
+                  ["Acme Robotics", "D", "D · procurement", "—", "—"],
+                  ["Swarmer", "C", "C · Swarmer SEC filings", "Swarmer newsroom (Blocked by the site)", "—"]]
+COVERAGE_SUMMARY = "A newsroom 120 · B distributor 10 · C filings 26 · D procurement 5 · E trade press 0 · F mentions only 141"
+# An identity backfill (contract P5.3) as radar-propose stores it: three
+# companies' identity fields, the evidence for each, and the Worker's effects
+# (Acme's CAGE code replaces one already stored).
+CIK_URL = "https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=0001234567"
+UEI_URL = "https://www.usaspending.gov/recipient/abc-123/latest"
+REVIEW = {"status": "channels_exhausted", "checked_at": "2026-10-01T17:00:00Z", "reason": "Newsroom blocked; no filings.",
+          "ladder": [{"rung": "A", "result": "blocked"}, {"rung": "B", "result": "none"}]}
+IDENTITY = draft(80, lane="discovery", action="identity_backfill", proposal={
+    "lane": "discovery", "action": "identity_backfill", "title": "Identity backfill · 3 companies",
+    "why": "SEC ticker matches and a USAspending recipient profile.", "covered_entity_id": None, "counterpart": None,
+    "relationship_kind": None, "dedupe_key": "identity:swarmer:sec_cik", "probe": None, "backtest": None, "notes": "Two CIKs verified.",
+    "operations": [
+        {"kind": "entity_upsert", "value": {"id": "swarmer", "sec_cik": "0001234567"}},
+        {"kind": "entity_upsert", "value": {"id": "acme_robotics", "name": "Acme Robotics", "uei_codes": ["ABC123DEF456"], "cage_codes": ["1AB23"]}},
+        {"kind": "entity_upsert", "value": {"id": "ceva", "coverage_review": REVIEW}}],
+    "evidence": [
+        {"entity_id": "swarmer", "field": "sec_cik", "value": "0001234567", "source_url": CIK_URL},
+        {"entity_id": "acme_robotics", "field": "uei_codes", "value": "ABC123DEF456", "source_url": UEI_URL},
+        {"entity_id": "acme_robotics", "field": "cage_codes", "value": "1AB23", "source_url": "javascript:alert(1)"}]},
+    effects=[{"kind": "entity_upsert", "target": "swarmer", "name": "Swarmer Inc.", "is_new": False, "changes": {"sec_cik": [None, "0001234567"]}},
+             {"kind": "entity_upsert", "target": "acme_robotics", "name": "Acme Robotics", "is_new": False,
+              "changes": {"uei_codes": [[], ["ABC123DEF456"]], "cage_codes": [["9ZZ99"], ["1AB23"]]}},
+             {"kind": "entity_upsert", "target": "ceva", "name": "Ceva Logistics", "is_new": False, "changes": {"coverage_review": [None, REVIEW]}}])
 
 
 class RadarTabTests(unittest.TestCase):
@@ -190,6 +235,7 @@ class RadarTabTests(unittest.TestCase):
         self.recent = RECENT
         self.lanes = LANES
         self.recall = None
+        self.coverage = None
         self.pending_error = None
         self.lanes_error = None
         self.approve_error = None
@@ -221,7 +267,8 @@ class RadarTabTests(unittest.TestCase):
             if self.lanes_error:
                 return StubResponse({"ok": False, "error": self.lanes_error}, 500)
             return StubResponse({"ok": True, "revision_id": "rev-7", "sources": self.lanes,
-                                 **({"recall": self.recall} if self.recall is not None else {})})
+                                 **({"recall": self.recall} if self.recall is not None else {}),
+                                 **({"coverage": self.coverage} if self.coverage is not None else {})})
         raise AssertionError(f"unexpected request: {url}")
 
     def fake_post(self, url, **kwargs):
@@ -1181,6 +1228,223 @@ class RadarTabTests(unittest.TestCase):
         self.assertEqual(self.posts()[-1][2], {"text": "The Navy's Skydio order never reached the digest", "kind": "missed", "url": "https://news example/skydio"})
         self.assertEqual([e.value for e in app.error], [md_escape("The link must be an http(s) URL.")])
         self.assertEqual(list(app.success), [])
+
+    # ------------------------------------------------------------ phase 5: coverage
+
+    def test_coverage_rows_list_companies_below_c_or_with_a_failing_channel(self):
+        self.assertEqual(coverage_summary(COVERAGE), COVERAGE_SUMMARY)
+        rows = coverage_rows(COVERAGE)
+        self.assertEqual([list(r) for r in rows], [COVERAGE_COLUMNS] * 4)
+        self.assertEqual([list(r.values()) for r in rows], COVERAGE_TABLE, "worst grade first; Beta (A, nothing failing) is left out")
+        # Other shapes the Worker may send: a failing count or flag, a channel
+        # without a failure class, a bare kind, an unknown review status.
+        def one(**fields):
+            return coverage_rows({"rows": [{"entity_id": "x", "name": "X", "grade": "B", **fields}]})
+        self.assertEqual(one(failing=2)[0]["Failing"], "2")
+        self.assertEqual(one(failing=True)[0]["Failing"], "Yes")
+        self.assertEqual(one(failing=[{"key": "managed_x", "status": "stale"}, "EDGAR GRRR"])[0]["Failing"], "managed_x (stale); EDGAR GRRR")
+        self.assertEqual(one(failing=[{"kind": "issuer_release_distribution", "failure_class": "not_found"}])[0]["Failing"],
+                         "release distributor (Page not found)")
+        self.assertEqual(one(failing=[{"name": "X feed", "failure_class": "rate_limited"}])[0]["Failing"], "X feed (rate limited)")
+        self.assertEqual(one(failing=[], best_channel="issuer_release_distribution"), [], "graded B with nothing failing")
+        self.assertEqual(one(failing=1, best_channel="issuer_release_distribution")[0]["Best channel"], "release distributor")
+        self.assertEqual(one(failing=1, review={"status": "new_status"})[0]["Review"], "new status")
+        self.assertEqual(one(failing=1, grade=None, name=None)[0], {"Company": "x", "Grade": "—", "Best channel": "—", "Failing": "1", "Review": "—"})
+        # Counted from the rows when the Worker sends no summary; nothing at
+        # all when it sends no coverage.
+        self.assertEqual(coverage_summary({"rows": COVERAGE["rows"]}),
+                         "A newsroom 1 · B distributor 0 · C filings 1 · D procurement 1 · E trade press 1 · F mentions only 1")
+        for absent in (None, {}, "corrupt", {"summary": {}, "rows": []}, {"rows": "lots"}):
+            self.assertEqual(coverage_summary(absent), "")
+            self.assertEqual(coverage_rows(absent), [])
+
+    def test_lane_health_shows_coverage_by_company_with_the_table_collapsed(self):
+        self.coverage = COVERAGE
+        app = self.start()
+        captions = [c.value for c in app.caption]
+        self.assertLess(captions.index("Coverage by company"), captions.index(COVERAGE_SUMMARY))
+        toggle = app.toggle("radar_coverage_table")
+        self.assertEqual((toggle.label, toggle.value), ("Companies below C or with a failing channel · 4", False))
+        self.assertEqual(len(app.dataframe), 1, "collapsed: only the sources table")
+        # One action per session (Streamlit 1.37 AppTest).
+        app.toggle("radar_coverage_table").set_value(True).run()
+        self.assertEqual(list(app.exception), [])
+        self.assertEqual(len(app.dataframe), 2)
+        table = app.dataframe[1].value
+        self.assertEqual(list(table.columns), COVERAGE_COLUMNS)
+        self.assertEqual(table.values.tolist(), COVERAGE_TABLE)
+        self.assertEqual(self.posts(), [])
+
+    def test_lane_health_coverage_comes_after_recall(self):
+        self.lanes, self.recall, self.coverage = [], RECALL, COVERAGE
+        app = self.start()
+        captions = [c.value for c in app.caption]
+        self.assertLess(captions.index("Recall by industry (30 days)"), captions.index("Coverage by company"))
+        self.assertEqual(list(app.dataframe[0].value.columns), RECALL_COLUMNS)
+
+    def test_lane_health_without_coverage_shows_nothing_new(self):
+        app = self.start()
+        self.assertNotIn("Coverage by company", [c.value for c in app.caption], "an older Worker sends no coverage")
+        self.assertNotIn("radar_coverage_table", [t.key for t in app.toggle])
+        self.coverage = {"summary": {"A": 3, "B": 1, "C": 2}, "rows": [{"entity_id": "beta", "name": "Beta Corp", "grade": "A", "failing": []}]}
+        app = self.start()
+        captions = [c.value for c in app.caption]
+        self.assertIn("A newsroom 3 · B distributor 1 · C filings 2 · D procurement 0 · E trade press 0 · F mentions only 0", captions)
+        self.assertIn("Every company is graded C or better, with no failing channel.", captions)
+        self.assertNotIn("radar_coverage_table", [t.key for t in app.toggle])
+        self.assertEqual(len(app.dataframe), 1)
+
+    # ------------------------------------------------------------ phase 5: identity backfill
+
+    def test_identity_rows_are_what_approve_stores(self):
+        rows = identity_rows(IDENTITY)
+        self.assertEqual([(r["company"], r["field"], r["value"], r["source_url"]) for r in rows], [
+            ("Swarmer Inc.", "SEC CIK", "0001234567", CIK_URL),
+            ("Acme Robotics", "UEI codes", "ABC123DEF456", UEI_URL),
+            ("Acme Robotics", "CAGE codes", "1AB23", "javascript:alert(1)"),
+            ("Ceva Logistics", "Coverage review", "Channels exhausted · Newsroom blocked; no filings.", None)])
+        self.assertEqual([value_text(v) for v in (None, "", [], ["A", "B"], {"exchange": "TSX", "id": "ABC"}, {"note": "x", "as_of": "2026-10-01"},
+                                                  True, 123, "a\n\nb", "x" * 200)],
+                         ["cleared", "cleared", "cleared", "A, B", "TSX ABC", "note: x; as_of: 2026-10-01", "yes", "123", "a b", "x" * 159 + "…"])
+        self.assertEqual(evidence_link(CIK_URL), '<a href="https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&amp;CIK=0001234567" '
+                                                 'target="_blank" rel="noopener noreferrer">sec.gov ↗</a>')
+        self.assertEqual(evidence_link("javascript:alert(1)"), "javascript:alert(1)", "anything but http(s) stays plain text")
+        self.assertEqual(evidence_link("javascript://sec.gov/%0aalert(1)"), "javascript://sec.gov/%0aalert(1)", "never named as a host")
+        self.assertEqual(evidence_link(None), "—")
+        self.assertEqual(identity_html(draft(81, action="identity_backfill", proposal={"action": "identity_backfill", "operations": []})), "")
+
+    def test_an_identity_backfill_card_shows_a_compact_table(self):
+        self.drafts = [IDENTITY]
+        app = self.start()
+        rendered = self.rendered(app)
+        self.assertIn('<span class="loop-kind loop-kind-discovery">Discovery lane</span><span class="refine-chip">Identity backfill</span>', rendered)
+        self.assertIn('<div class="refine-label" style="margin-top:10px">4 changes · 3 companies</div><table class="radar-table"><thead><tr>'
+                      "<th>Company</th><th>Field</th><th>Value</th><th>Evidence</th></tr></thead><tbody>"
+                      f'<tr><td>Swarmer Inc.</td><td>SEC CIK</td><td>0001234567</td><td>{evidence_link(CIK_URL)}</td></tr>'
+                      '<tr><td>Acme Robotics</td><td>UEI codes</td><td>ABC123DEF456</td><td><a href="https://www.usaspending.gov/recipient/abc-123/latest" '
+                      'target="_blank" rel="noopener noreferrer">usaspending.gov ↗</a></td></tr>'
+                      "<tr><td>Acme Robotics</td><td>CAGE codes</td><td>1AB23</td><td>javascript:alert(1)</td></tr>"
+                      "<tr><td>Ceva Logistics</td><td>Coverage review</td><td>Channels exhausted · Newsroom blocked; no filings.</td><td>—</td></tr>"
+                      "</tbody></table></div>", rendered)
+        self.assertNotIn('href="javascript', rendered)
+        # The table lists every field; a warn chip only where a stored value is replaced.
+        self.assertIn('<span class="refine-chip warn">Changes existing company: Acme Robotics · CAGE codes</span>', rendered)
+        self.assertNotIn("Changes existing company: Swarmer", rendered)
+        self.assertNotIn("Changes existing company: Ceva", rendered)
+        self.assertIn("Changes existing company: Swarmer Inc. · SEC CIK", effects_html(IDENTITY), "other cards keep every chip")
+        buttons = {b.key: b for b in app.button}
+        self.assertTrue({"radar_approve_80", "radar_sendback_80", "radar_discard_80"} <= set(buttons))
+        self.assertEqual(buttons["radar_approve_80"].proto.type, "primary")
+        self.assertEqual(self.posts(), [])
+
+    def test_identity_backfill_details_offer_no_field_to_edit_and_approve_posts_nothing(self):
+        self.drafts = [IDENTITY]
+        self.approve_label = "Radar #80: Identity backfill · 3 companies"
+        # One click per session (Streamlit 1.37 AppTest).
+        for open_details in (False, True):
+            with self.subTest(open_details=open_details):
+                app = self.start()
+                if open_details:
+                    app.toggle("radar_details_80").set_value(True).run()
+                    self.assertEqual(list(app.exception), [])
+                    fields = [w.key for w in (*app.text_input, *app.text_area, *app.number_input)]
+                    self.assertEqual([k for k in fields if str(k).startswith("radar_80_op")], [], "no editable operation fields")
+                    self.assertIn("Claude’s note: Two CIKs verified.", self.rendered(app))
+                    self.assertEqual(app.text_input("radar_note_80").placeholder, "what to change")
+                app.button("radar_approve_80").click().run()
+                self.assertEqual(list(app.exception), [])
+                url, body = self.posts()[-1][1:]
+                self.assertTrue(url.endswith("/radar/drafts/80/approve"))
+                self.assertEqual(body, {}, "Claude's operations stand as written")
+                self.assertEqual([s.value for s in app.success], ["Approved · Radar \\#80\\:​ Identity backfill · 3 companies · undo within 24 h"])
+        self.assertEqual(len(self.posts()), 2)
+
+    def test_identity_backfill_is_sent_back_with_a_note_only(self):
+        self.drafts = [IDENTITY]
+        app = self.start()
+        app.button("radar_sendback_80").click().run()
+        self.assertEqual(self.posts(), [])
+        self.assertTrue(any(i.value == "Add a note, so Claude knows what to change." for i in app.info))
+        app = self.start()
+        app.text_input("radar_note_80").set_value("Drop Acme's CAGE code; the old one is right")
+        app.button("radar_sendback_80").click().run()
+        self.assertEqual(list(app.exception), [])
+        url, body = self.posts()[-1][1:]
+        self.assertTrue(url.endswith("/radar/drafts/80/refine"))
+        self.assertEqual(body, {"feedback": "Drop Acme's CAGE code; the old one is right"})
+
+    def test_identity_backfill_text_cannot_leave_its_html_block(self):
+        hostile = draft(82, lane="discovery", action="identity_backfill", proposal={
+            "lane": "discovery", "action": "identity_backfill", "title": "Identity backfill",
+            "operations": [{"kind": "entity_upsert", "value": {"id": "zeta" + IMAGE, "name": "Zeta <script>x</script>" + IMAGE,
+                                                               "uei_codes": ["<b>U1</b>" + IMAGE], "procurement_identity_evidence": {"note": "a\n\nb <i>"}}}],
+            "evidence": [{"entity_id": "zeta" + IMAGE, "field": "uei_codes", "source_url": "https://sam.gov/entity/U1\n\n![x](https://attacker.example/p.png)"},
+                         {"entity_id": "zeta" + IMAGE, "field": "procurement_identity_evidence", "source_url": "data:text/html,<script>alert(1)</script>"}]})
+        body = identity_html(hostile)
+        self.assertNotIn("\n", body)
+        self.assertNotIn("<script>", body)
+        self.assertNotIn("<b>", body)
+        self.assertNotIn("<i>", body)
+        self.assertIn("<td>Zeta &lt;script&gt;x&lt;/script&gt; ![x](https://attacker.example/p.png)</td>", body)
+        self.assertIn("<td>&lt;b&gt;U1&lt;/b&gt; ![x](https://attacker.example/p.png)</td>", body)
+        self.assertIn('<a href="https://sam.gov/entity/U1![x](https://attacker.example/p.png)" target="_blank" rel="noopener noreferrer">sam.gov ↗</a>', body)
+        self.assertIn("<td>data:text/html,&lt;script&gt;alert(1)&lt;/script&gt;</td>", body, "not a link")
+        self.assertIn("<td>note: a b &lt;i&gt;</td>", body)
+        self.drafts = [hostile]
+        app = self.start()
+        cards = [m.value for m in app.markdown if '<table class="radar-table">' in m.value]
+        self.assertEqual(len(cards), 1)
+        self.assertNotIn("\n", cards[0])
+
+    # ------------------------------------------------------------ phase 5: failure classes
+
+    def test_failure_classes_read_as_chips(self):
+        self.assertEqual(FAILURE_LABEL, {"blocked": "Blocked by the site", "js_rendered": "Needs JavaScript", "no_structure": "No article list",
+                                         "not_found": "Page not found", "too_large": "Page too large", "transient": "Temporary error",
+                                         "invalid": "Invalid URL"})
+        for failure, label in FAILURE_LABEL.items():
+            self.assertIn(f'<span class="refine-chip warn">{label}</span>', evidence_html({"probe": {"total_found": 0, "failure_class": failure}}))
+            # The Worker stores no top-level class on a card, so none is read.
+            self.assertEqual(evidence_html({"failure_class": failure}), "")
+        # A failed probe that counted nothing says so rather than '0 posts'.
+        blocked = evidence_html({"probe": {"endpoint": "https://swarmer.example/news", "failure_class": "blocked", "http_status": 403,
+                                           "checked_at": "2026-09-30T17:35:00Z"}})
+        self.assertEqual(blocked, '<div class="rule-meta">Probe failed · HTTP 403 · checked Sep 30, 1:35 PM ET</div>'
+                                  '<div class="refine-chips"><span class="refine-chip warn">Blocked by the site</span></div>')
+        self.assertIn("Probe: 0 posts · 0 excluded", evidence_html({"probe": {"total_found": 0, "failure_class": "no_structure"}}))
+        self.assertIn("Probe failed</div>", evidence_html({"probe": {"failure_class": "transient", "http_status": "503"}}))
+        both = evidence_html({"probe": {"total_found": 0, "failure_class": "js_rendered"}, "failure_class": "blocked"})
+        self.assertIn('<span class="refine-chip warn">Needs JavaScript</span>', both)
+        self.assertNotIn("Blocked by the site", both)
+        self.assertEqual(evidence_html({"notes": "failure_class: blocked", "probe": None}), "", "notes are not parsed")
+        self.assertNotIn("refine-chip", evidence_html({"probe": {"total_found": 0, "failure_class": ["blocked"]}}), "only a string is a class")
+        self.assertIn('<span class="refine-chip warn">rate limited &lt;b&gt;</span>',
+                      evidence_html({"probe": {"total_found": 0, "failure_class": "rate_limited <b>"}}))
+        self.assertEqual(failure_text("too_large"), "Page too large")
+
+    def test_cards_show_their_failure_class(self):
+        # A failing protected source becomes a no_change card naming the code
+        # change (P5.5); a failing managed one, a fix_source to the next rung.
+        protected = draft(90, lane="relationship", action="no_change", proposal={
+            "lane": "relationship", "action": "no_change", "title": "EDGAR GRRR feed is failing", "why": "Five failures in a row.",
+            "relationship_kind": None, "dedupe_key": "channel:edgar_grrr",
+            "probe": {"endpoint": "https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=GRRR", "failure_class": "js_rendered"},
+            "notes": "Needs a JSON adapter in news-monitor.", "operations": []})
+        fix = draft(91, lane="relationship", action="fix_source", proposal={
+            "lane": "relationship", "action": "fix_source", "title": "Swarmer: move to its SEC filings", "why": "Its newsroom answers 403.",
+            "relationship_kind": None, "dedupe_key": "channel:managed_swarmer",
+            "probe": {"endpoint": "https://swarmer.example/news", "failure_class": "blocked", "http_status": 403, "checked_at": "2026-09-30T17:35:00Z"},
+            "operations": [{"kind": "source_upsert", "value": {"key": "managed_swarmer", "configuration_status": "paused"}}]})
+        self.drafts = [protected, fix]
+        app = self.start()
+        cards = {card_id: next(m.value for m in app.markdown if f"#{card_id} · from the Scout" in m.value) for card_id in (90, 91)}
+        self.assertIn('<span class="refine-chip">No change</span>', cards[90])
+        self.assertIn('<span class="refine-chip warn">Needs JavaScript</span>', cards[90])
+        self.assertIn("Probe failed · HTTP 403 · checked Sep 30, 1:35 PM ET", cards[91])
+        self.assertIn('<span class="refine-chip warn">Blocked by the site</span>', cards[91])
+        self.assertNotIn("Blocked by the site", cards[90])
+        self.assertTrue({"radar_sendback_90", "radar_discard_90", "radar_approve_91"} <= {b.key for b in app.button})
+        self.assertNotIn("radar_approve_90", {b.key for b in app.button})
 
 
 if __name__ == "__main__":
