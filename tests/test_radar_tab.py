@@ -190,6 +190,8 @@ class RadarTabTests(unittest.TestCase):
         self.recent = RECENT
         self.lanes = LANES
         self.recall = None
+        self.pending_error = None
+        self.lanes_error = None
         self.approve_error = None
         self.approve_label = None
         self.request_error = None
@@ -210,10 +212,14 @@ class RadarTabTests(unittest.TestCase):
         if "/radar/drafts" in url and "status=recent" in url:
             return StubResponse({"ok": True, "drafts": self.recent})
         if "/radar/drafts" in url and "status=pending" in url:
+            if self.pending_error:
+                return StubResponse({"ok": False, "error": self.pending_error}, 500)
             return StubResponse({"ok": True, "drafts": self.drafts, "counts": {
                 "your_turn": len([d for d in self.drafts if d["refine_status"] == "proposed"]),
                 "with_claude": len([d for d in self.drafts if d["refine_status"] == "queued"])}})
         if url.endswith("/radar/lanes"):
+            if self.lanes_error:
+                return StubResponse({"ok": False, "error": self.lanes_error}, 500)
             return StubResponse({"ok": True, "revision_id": "rev-7", "sources": self.lanes,
                                  **({"recall": self.recall} if self.recall is not None else {})})
         raise AssertionError(f"unexpected request: {url}")
@@ -503,7 +509,7 @@ class RadarTabTests(unittest.TestCase):
         app = self.start()
         app.button("radar_approve_12").click().run()
         self.assertEqual(list(app.exception), [])
-        self.assertEqual([e.value for e in app.error], [PROBE_FAILED])
+        self.assertEqual([e.value for e in app.error], [md_escape(PROBE_FAILED)])
         self.assertEqual(list(app.success), [])
         self.assertTrue(any(b.key == "radar_approve_12" for b in app.button), "the card is still there")
 
@@ -790,8 +796,38 @@ class RadarTabTests(unittest.TestCase):
         app = self.start()
         app.button("radar_extend_50").click().run()
         self.assertEqual(list(app.exception), [])
-        self.assertEqual([e.value for e in app.error], ["The relationship lane is full."])
+        self.assertEqual([e.value for e in app.error], [md_escape("The relationship lane is full.")])
         self.assertTrue(any(b.key == "radar_extend_50" for b in app.button))
+
+    def test_a_refusal_quoting_a_hostile_source_name_is_plain_text(self):
+        # A verdict on a source that has left the trial lane: the Worker
+        # answers 422 with the name the Scout wrote from web content. st.error
+        # renders Markdown, so unescaped it would load the image and show the
+        # link inside the error banner.
+        self.drafts = [TRIAL_RESULT]
+        self.approve_error = ("Acme ![x](https://attacker.example/p.png) [Re-enter PIN](https://attacker.example/login)"
+                              " is no longer in the trial lane.")
+        app = self.start()
+        app.button("radar_promote_50").click().run()
+        self.assertEqual(list(app.exception), [])
+        shown = [e.value for e in app.error]
+        self.assertEqual(shown, [(r"Acme \!\[x\]\(https\:|\/\/attacker|\.example\/p|\.png\) \[Re\-enter PIN\]\(https\:|\/\/attacker|\.example\/login\)"
+                                  r" is no longer in the trial lane|\.").replace("|", "​")])
+        self.assertNotIn("![", shown[0])
+        self.assertNotIn("](", shown[0])
+        self.assertEqual(list(app.success), [])
+        self.assertTrue(any(b.key == "radar_promote_50" for b in app.button), "the card is still there")
+
+    def test_list_and_lane_health_errors_are_plain_text(self):
+        hostile = "Lanes unavailable: ![x](https://attacker.example/p.png)"
+        self.lanes_error = hostile
+        app = self.start()
+        self.assertEqual([e.value for e in app.error], [md_escape(hostile)], "Lane health")
+        self.assertNotIn("](", app.error[0].value)
+        self.pending_error = hostile
+        app = self.start()
+        self.assertEqual([e.value for e in app.error], [md_escape(hostile)], "the draft list; Lane health is not reached")
+        self.assertNotIn("](", app.error[0].value)
 
     def test_a_trial_result_is_sent_back_with_a_note_only(self):
         self.drafts = [TRIAL_RESULT]
@@ -1001,7 +1037,7 @@ class RadarTabTests(unittest.TestCase):
         app = self.start()
         app.button("radar_torules_70").click().run()
         self.assertEqual(list(app.exception), [])
-        self.assertEqual([e.value for e in app.error], ["Not found."])
+        self.assertEqual([e.value for e in app.error], [md_escape("Not found.")])
         self.assertEqual(list(app.success), [])
         self.assertTrue(any(b.key == "radar_torules_70" for b in app.button), "the card is still there")
 
@@ -1036,7 +1072,7 @@ class RadarTabTests(unittest.TestCase):
         for status, response, message in (
                 (200, {"ok": True, "draft_id": 71, "rules_draft_withdrawn": True}, ("success", "Undone · #71 is back in Radar · Rules draft #88 withdrawn")),
                 (409, {"ok": False, "error": "Rules draft #88 was already decided; undo it on the Rules tab."},
-                 ("error", "Rules draft #88 was already decided; undo it on the Rules tab."))):
+                 ("error", md_escape("Rules draft #88 was already decided; undo it on the Rules tab.")))):
             with self.subTest(status=status):
                 self.undo_result = (status, response)
                 app = self.start()
@@ -1143,7 +1179,7 @@ class RadarTabTests(unittest.TestCase):
         app.text_input("radar_url").set_value("https://news example/skydio")
         self.composer_submit(app)
         self.assertEqual(self.posts()[-1][2], {"text": "The Navy's Skydio order never reached the digest", "kind": "missed", "url": "https://news example/skydio"})
-        self.assertEqual([e.value for e in app.error], ["The link must be an http(s) URL."])
+        self.assertEqual([e.value for e in app.error], [md_escape("The link must be an http(s) URL.")])
         self.assertEqual(list(app.success), [])
 
 

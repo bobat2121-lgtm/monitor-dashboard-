@@ -219,7 +219,7 @@ def esc(text) -> str:
 
 
 def md_escape(text) -> str:
-    """Plain text inside a Markdown message (st.success): every ASCII
+    """Plain text inside a Markdown message (st.success, st.error): every ASCII
     punctuation mark is backslash-escaped, so '![x](url)' stays literal."""
     escaped = "".join("\\" + ch if ch in string.punctuation else ch for ch in " ".join(str(text or "").split()))
     # GFM links bare addresses after the escapes are resolved; a zero-width
@@ -601,11 +601,19 @@ def flash(message: str) -> None:
     st.rerun()
 
 
+def show_error(exc) -> None:
+    """A Worker refusal as plain text. st.error renders Markdown, and a
+    refusal can quote registry text the Scout wrote from web content (a
+    trial source's name in 'X is no longer in the trial lane.'), so it is
+    escaped like the success messages: no remote image, no link."""
+    st.error(md_escape(str(exc)))
+
+
 def _act(base, pin, path, payload, message):
     try:
         result = api(base, pin, path, payload, method="POST")
     except ValueError as exc:
-        st.error(str(exc))
+        show_error(exc)
         return
     flash(message(result))
 
@@ -989,7 +997,7 @@ def render_lanes(base, pin):
         try:
             lanes = api(base, pin, "/lanes")
         except ValueError as exc:
-            st.error(str(exc))
+            show_error(exc)
             return
         sources = lanes.get("sources") or []
         if sources:
@@ -1029,7 +1037,7 @@ def render_radar_view(base):
         pending = api(base, pin, "/drafts?status=pending")
         recent = api(base, pin, "/drafts?status=recent")["drafts"]
     except ValueError as exc:
-        st.error(str(exc))
+        show_error(exc)
         return
     groups = classify(pending.get("drafts") or [])
     counts = pending.get("counts") or {}
