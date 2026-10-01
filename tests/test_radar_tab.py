@@ -7,9 +7,9 @@ from unittest.mock import patch
 import streamlit as st
 from streamlit.testing.v1 import AppTest
 
-from radar_view import (EXTRA_NAMES_FIELD, TOPIC_FILTER_FIELD, cadence_ceiling, chips_html, classify, count_text, effects_html, evidence_html,
-                        facts_html, history_html, include_terms_field, md_escape, next_pickup_label, sample_count, samples_html, sent_words,
-                        short_time, split_aliases)
+from radar_view import (EXTRA_NAMES_FIELD, TOPIC_FILTER_FIELD, average_text, cadence_ceiling, chips_html, classify, count_text, effects_html,
+                        evidence_html, facts_html, history_html, include_terms_field, md_escape, next_pickup_label, recent_label, sample_count,
+                        samples_html, sent_words, short_time, split_aliases, trial_day, trial_html)
 
 
 APP_PATH = Path(__file__).resolve().parents[1] / "streamlit_app.py"
@@ -125,6 +125,31 @@ CUSTOMER = draft(17, proposal={
         {"term": "Mistral", "hits": 5000, "context_hits": 40, "truncated": True, "samples": [{"title": "Mistral AI raises", "url": "https://example.com/m", "ts": "2026-09-01T12:00:00Z"}]},
         {"term": "Mistral Defense", "hits": 1, "context_hits": 1, "samples": []}]},
 })
+# The trial lane (contract P3.1, P3.5): a trial's verdict card, as
+# radar-propose stores it, with the recommended verdict's effects.
+SCORECARD = {"source_key": "managed_beta", "name": "Beta Corp newsroom", "configuration_status": "configured", "day": 9, "of_days": 21,
+             "shown": 4, "avg_grade": 77.6, "grades_70_plus": 3, "grades_below_40": 0, "unique_catches": 9, "duplicates": 3, "collected": 12,
+             "last_article": "2026-09-30T17:00:00Z"}
+TRIAL_RESULT = draft(50, lane="discovery", action="trial_result", proposal={
+    "lane": "discovery", "action": "trial_result", "title": "Beta Corp newsroom trial · promote", "why": "Three trial items graded 70+ by day 9.",
+    "why_url": None, "covered_entity_id": None, "counterpart": None, "relationship_kind": None,
+    "dedupe_key": "trial:managed_beta:2026-10-21t17:00:00.000z:early_promote", "operations": [], "probe": None, "backtest": None, "notes": None,
+    "source_key": "managed_beta", "verdict": "promote", "reason": "early_promote", "scorecard": SCORECARD, "promote_to": {"radar_lane": None}},
+    effects=[{"kind": "source_upsert", "target": "managed_beta", "name": "Beta Corp newsroom", "is_new": False,
+              "changes": {"radar_lane": ["trial", None], "trial": [{"started_at": "2026-09-30T17:00:00.000Z", "ends_at": "2026-10-21T17:00:00.000Z"}, None]}}])
+# A start_trial on the owner's request: a configured newsroom in the trial lane.
+START_TRIAL = draft(51, origin="owner", lane="discovery", action="start_trial", owner_text="Trial Beta Corp's newsroom", proposal={
+    "lane": "discovery", "action": "start_trial", "title": "Trial: Beta Corp newsroom · every 60 min", "why": "You asked to trial Beta Corp's newsroom.",
+    "covered_entity_id": None, "counterpart": None, "relationship_kind": None, "dedupe_key": "source:beta.example/news",
+    "operations": [{"kind": "source_upsert", "value": {
+        "name": "Beta Corp newsroom", "endpoint": "https://beta.example/news", "adapter": "html", "path_prefix": "/news/", "entity_ids": ["beta"],
+        "source_role": "company_newsroom", "companyStatus": "public", "cadence_minutes": 60, "configuration_status": "configured",
+        "include_terms": [], "radar_lane": "trial"}}]})
+TRIAL_LANE = {"key": "managed_beta", "name": "Beta Corp newsroom", "endpoint": "https://beta.example/news", "radar_lane": "trial",
+              "relationship_kind": None, "covered_entity_name": None, "cadence_minutes": 60, "configuration_status": "configured",
+              "status": "Collecting", "last_ok": "2026-09-30T17:00:00Z", "last_article": "2026-09-30T15:00:00Z", "fail_count": 0, "last_error": None,
+              "trial": {"day": 25, "of_days": 21, "shown": 4, "avg_grade": 61.5, "grades_70_plus": 2, "grades_below_40": 1, "unique_catches": 9,
+                        "duplicates": 3, "collected": 12, "last_article": "2026-09-30T15:00:00Z"}}
 
 
 class RadarTabTests(unittest.TestCase):
@@ -560,6 +585,36 @@ class RadarTabTests(unittest.TestCase):
         table = app.dataframe[0].value
         self.assertEqual(list(table.columns), ["Source", "Covered company", "Kind", "Every (min)", "Status", "Last check", "Last article"])
         self.assertEqual(table.iloc[0].tolist(), ["Acme Robotics newsroom", "Ondas", "Acquired", 30, "Collecting", "Sep 30, 1:00 PM ET", "Sep 29, 11:00 AM ET"])
+        self.assertEqual(len(app.dataframe), 1, "no trial source, no trial table")
+
+    def test_lane_health_lists_trial_sources_in_a_second_table(self):
+        # A trial past its end (due), a retired one (paused: never due) and
+        # one whose scorecard has no numbers yet.
+        retired = {**TRIAL_LANE, "key": "managed_gamma", "name": "Gamma newsroom", "configuration_status": "paused", "status": "Paused",
+                   "trial": {**TRIAL_LANE["trial"], "day": 30, "avg_grade": 33.4}}
+        fresh = {**TRIAL_LANE, "key": "managed_delta", "name": "Delta newsroom",
+                 "trial": {"day": 1, "of_days": 21, "shown": 0, "avg_grade": None, "grades_70_plus": 0, "grades_below_40": 0,
+                           "unique_catches": None, "duplicates": None, "collected": 0, "last_article": None}}
+        self.lanes = [{**LANES[0], "trial": None}, TRIAL_LANE, retired, fresh]
+        app = self.start()
+        table = app.dataframe[0].value
+        self.assertEqual(list(table.columns), ["Source", "Covered company", "Kind", "Every (min)", "Status", "Last check", "Last article"])
+        self.assertEqual(table.iloc[0].tolist(), ["Acme Robotics newsroom", "Ondas", "Acquired", 30, "Collecting", "Sep 30, 1:00 PM ET", "Sep 29, 11:00 AM ET"])
+        self.assertEqual(table.iloc[1].tolist(), ["Beta Corp newsroom", "—", "Trial", 60, "Collecting", "Sep 30, 1:00 PM ET", "Sep 30, 11:00 AM ET"])
+        self.assertEqual(table["Kind"].tolist(), ["Acquired", "Trial", "Trial", "Trial"])
+        self.assertIn("Trial sources", [c.value for c in app.caption])
+        trials = app.dataframe[1].value
+        self.assertEqual(list(trials.columns), ["Source", "Day", "Shown", "Avg grade", "70+", "<40", "Unique", "Duplicates", "Collected"])
+        self.assertEqual(trials.values.tolist(), [
+            ["Beta Corp newsroom", "25/21 · due", "4", "62", "2", "1", "9", "3", "12"],
+            ["Gamma newsroom", "30/21", "4", "33", "2", "1", "9", "3", "12"],
+            ["Delta newsroom", "1/21", "0", "—", "0", "0", "—", "—", "0"]])
+        self.assertEqual(trial_day({"trial": {"day": None, "of_days": 21}}), "—")
+        self.assertEqual(trial_day({"trial": {"day": 21, "of_days": 21}, "configuration_status": "configured"}), "21/21",
+                         "the last day; due from ends_at, which starts day 22")
+        self.assertEqual(trial_day({"trial": {"day": 22, "of_days": 21}, "configuration_status": "configured"}), "22/21 · due")
+        self.assertEqual([average_text(v) for v in (61.5, 62.5, 70, None, True, "70", float("nan"), float("inf"))],
+                         ["62", "63", "70", "—", "—", "—", "—", "—"])
 
     def test_lane_health_shows_7_day_counts_when_the_worker_sends_them(self):
         # A managed source with counts, and a listed source outside the
@@ -647,6 +702,177 @@ class RadarTabTests(unittest.TestCase):
         self.assertIn("0 for you · 0 with Claude", captions)
         self.assertIn("Nothing waiting.", captions)
         self.assertIn("No Radar sources yet.", captions)
+
+    # ------------------------------------------------------------ trial lane
+
+    def test_a_trial_result_card_shows_the_scorecard_and_three_verdicts(self):
+        self.drafts = [TRIAL_RESULT]
+        app = self.start()
+        rendered = self.rendered(app)
+        self.assertIn('<span class="loop-kind loop-kind-discovery">Discovery lane</span><span class="refine-chip">Trial result</span>', rendered)
+        self.assertIn('<span class="refine-chip">Early: 3 grades of 70+</span>', rendered)
+        self.assertIn('<div class="rule-meta">Day 9 of 21 · 4 shown in the panel · average grade 78 · 3 graded 70+ · 0 below 40</div>'
+                      '<div class="rule-meta">12 collected · 9 unique · 3 duplicates · last article Sep 30, 1:00 PM ET</div>'
+                      '<div class="rule-meta">Claude recommends Promote · Promote: becomes a regular source</div>', rendered)
+        # The Worker's effects are those of the recommended verdict.
+        self.assertIn("Changes existing source: Beta Corp newsroom · lane, trial dates", rendered)
+        buttons = {b.key: b for b in app.button}
+        self.assertEqual([buttons[k].label for k in ("radar_promote_50", "radar_extend_50", "radar_retire_50")], ["Promote", "Extend 21 days", "Retire"])
+        self.assertEqual([buttons[k].proto.type for k in ("radar_promote_50", "radar_extend_50", "radar_retire_50")], ["primary", "secondary", "secondary"],
+                         "Claude's pick is the primary button")
+        self.assertIn("radar_sendback_50", buttons)
+        self.assertNotIn("radar_approve_50", buttons, "no Approve: the owner picks a verdict")
+        self.assertNotIn("radar_discard_50", buttons, "no Discard: the trial stays due until it is ended")
+        self.assertEqual(self.posts(), [])
+
+    def test_each_trial_verdict_posts_exactly_the_verdict(self):
+        # One click per session (Streamlit 1.37 AppTest).
+        self.drafts = [TRIAL_RESULT]
+        for verdict, done in (("promote", "Promoted"), ("extend", "Extended"), ("retire", "Retired")):
+            with self.subTest(verdict=verdict):
+                self.approve_label = f"Radar #50: Beta Corp newsroom trial · {verdict}"
+                app = self.start()
+                app.button(f"radar_{verdict}_50").click().run()
+                self.assertEqual(list(app.exception), [])
+                url, body = self.posts()[-1][1:]
+                self.assertTrue(url.endswith("/radar/drafts/50/approve"))
+                self.assertEqual(body, {"verdict": verdict})
+                self.assertEqual([s.value for s in app.success],
+                                 [f"{done} · Radar \\#50\\:​ Beta Corp newsroom trial · {verdict} · undo within 24 h"])
+        self.assertEqual(len(self.posts()), 3)
+
+    def test_a_refused_verdict_stays_on_the_card(self):
+        self.drafts = [TRIAL_RESULT]
+        self.approve_error = "The relationship lane is full."
+        app = self.start()
+        app.button("radar_extend_50").click().run()
+        self.assertEqual(list(app.exception), [])
+        self.assertEqual([e.value for e in app.error], ["The relationship lane is full."])
+        self.assertTrue(any(b.key == "radar_extend_50" for b in app.button))
+
+    def test_a_trial_result_is_sent_back_with_a_note_only(self):
+        self.drafts = [TRIAL_RESULT]
+        app = self.start()
+        app.button("radar_sendback_50").click().run()
+        self.assertEqual(self.posts(), [])
+        self.assertTrue(any(i.value == "Add a note, so Claude knows what to change." for i in app.info))
+        app = self.start()
+        app.toggle("radar_details_50").set_value(True).run()
+        app.text_input("radar_note_50").set_value("Promote it to a relationship source of Kratos")
+        app.button("radar_sendback_50").click().run()
+        self.assertEqual(list(app.exception), [])
+        url, body = self.posts()[-1][1:]
+        self.assertTrue(url.endswith("/radar/drafts/50/refine"))
+        self.assertEqual(body, {"feedback": "Promote it to a relationship source of Kratos"})
+
+    def test_an_undone_trial_result_offers_no_operation_to_edit(self):
+        # finalizeApproval stores the built verdict operation in the proposal
+        # and Undo reopens the card with it; the Worker refuses operations on
+        # a trial result's send-back, and a verdict posts only {"verdict"}.
+        built = {"kind": "source_upsert", "value": {
+            "key": "managed_beta", "name": "Beta Corp newsroom", "endpoint": "https://beta.example/news", "adapter": "html", "entity_ids": ["beta"],
+            "source_role": "company_newsroom", "companyStatus": "public", "cadence_minutes": 60, "configuration_status": "configured",
+            "include_terms": [], "radar_lane": None}}
+        self.drafts = [{**TRIAL_RESULT, "proposal": {**TRIAL_RESULT["proposal"], "operations": [built]}}]
+        # One click per session (Streamlit 1.37 AppTest).
+        for button, expected in (("radar_sendback_50", {"feedback": "Promote it to a relationship source of Kratos"}),
+                                 ("radar_promote_50", {"verdict": "promote"})):
+            with self.subTest(button=button):
+                app = self.start()
+                app.toggle("radar_details_50").set_value(True).run()
+                self.assertEqual(list(app.exception), [])
+                fields = [w.key for w in (*app.text_input, *app.text_area, *app.number_input)]
+                self.assertEqual([k for k in fields if str(k).startswith("radar_50_op")], [], "no editable operation fields")
+                self.assertNotIn("Newsroom URL", [w.label for w in app.text_input])
+                app.text_input("radar_note_50").set_value("Promote it to a relationship source of Kratos")
+                app.button(button).click().run()
+                self.assertEqual(list(app.exception), [])
+                self.assertEqual(self.posts()[-1][2], expected)
+
+    def test_a_sent_back_trial_result_cannot_be_withdrawn(self):
+        # Withdraw is a reject, and a trial result has no Discard: the
+        # verdict stays due until the owner picks one.
+        queued = draft(50, lane="discovery", action="trial_result", refine_status="queued", refine_round=1,
+                       owner_feedback=[{"round": 0, "text": "Promote it to a relationship source of Kratos", "at": "2026-09-30T16:00:00Z"}],
+                       previous_proposal=TRIAL_RESULT["proposal"])
+        self.drafts = [queued, REQUEST]
+        app = self.start()
+        self.assertIn("You sent: Promote it to a relationship source of Kratos", self.rendered(app))
+        keys = {b.key for b in app.button}
+        self.assertNotIn("radar_withdraw_50", keys)
+        self.assertIn("radar_withdraw_20", keys, "other send-backs and requests keep Withdraw")
+        self.assertEqual(self.posts(), [])
+
+    def test_trial_card_prefers_the_live_scorecard_and_names_the_promote_target(self):
+        live = {**SCORECARD, "day": 22, "shown": 5, "avg_grade": 35.2, "grades_70_plus": 0, "grades_below_40": 3}
+        card = {**TRIAL_RESULT, "trial_scorecard": live, "proposal": {
+            **TRIAL_RESULT["proposal"], "verdict": "retire", "reason": "day_21",
+            "promote_to": {"radar_lane": "relationship", "relationship": {"covered_entity_id": "kratos", "kind": "customer", "counterpart": "Beta Corp"}}}}
+        body = trial_html(card)
+        self.assertIn('<span class="refine-chip">Day 21 result</span>', body)
+        self.assertIn("Day 22 of 21 · 5 shown in the panel · average grade 35 · 0 graded 70+ · 3 below 40", body)
+        self.assertIn("Claude recommends Retire · Promote: becomes a relationship source of kratos", body)
+        early_retire = {**TRIAL_RESULT, "proposal": {**TRIAL_RESULT["proposal"], "reason": "early_retire"}}
+        self.assertIn('<span class="refine-chip">Early: 3 grades below 40</span>', trial_html(early_retire))
+        # A malformed scorecard never stops the card: numbers read as 0, no
+        # average as '—', and Claude's text stays escaped on one line.
+        hostile = {**TRIAL_RESULT, "proposal": {**TRIAL_RESULT["proposal"], "scorecard": "lots", "verdict": "<b>keep</b>",
+                                                "promote_to": {"radar_lane": "relationship", "relationship": {"covered_entity_id": "<i>x</i>\n\ny"}}}}
+        body = trial_html(hostile)
+        self.assertIn("0 shown in the panel · average grade — · 0 graded 70+ · 0 below 40", body)
+        self.assertNotIn("Day ", body)
+        self.assertIn("Promote: becomes a relationship source of &lt;i&gt;x&lt;/i&gt; y</div>", body)
+        self.assertNotIn("recommends", body, "an unknown verdict is not offered as a pick")
+        self.assertNotIn("\n", body)
+
+    def test_just_decided_names_the_trial_verdict(self):
+        decided = dict(status="approved", decided_at="2026-09-30T18:05:00Z", undo_available=True, lane="discovery", action="trial_result",
+                       proposal=TRIAL_RESULT["proposal"])
+        self.recent = [draft(61, result={"revision_id": "r1", "label": "Radar #61", "verdict": "promote"}, **decided),
+                       draft(62, result={"revision_id": "r2", "label": "Radar #62", "verdict": "extend"}, **decided),
+                       draft(63, result={"revision_id": "r3", "label": "Radar #63", "verdict": "retire"}, **decided), *RECENT]
+        app = self.start()
+        rendered = self.rendered(app)
+        for label in ("Promoted #61", "Extended #62", "Retired #63", "Approved #9", "Discarded #8"):
+            self.assertIn(f"{label} · ", rendered)
+        self.assertTrue({"radar_undo_61", "radar_undo_62", "radar_undo_63"} <= {b.key for b in app.button}, "undo is unchanged")
+        self.assertEqual(recent_label(draft(64, status="approved", result={"verdict": ["promote"]})), "Approved #64")
+        self.assertEqual(recent_label(draft(65, status="approved", result="corrupt")), "Approved #65")
+
+    def test_a_start_trial_card_offers_the_trial_cadence(self):
+        value = START_TRIAL["proposal"]["operations"][0]["value"]
+        self.assertEqual(cadence_ceiling(value, START_TRIAL), 60)
+        self.assertEqual(cadence_ceiling({**value, "cadence_minutes": 20, "entity_ids": ["entity_ondas"]},
+                                         draft(1, proposal={"covered_entity_id": "entity_ondas"})), 60,
+                         "a trial source never gets the covered newsroom's 8 minutes")
+        self.assertEqual(cadence_ceiling({**value, "companyStatus": "private"}, START_TRIAL), 60, "not the 120 of a private company")
+        existing = {"key": "managed_beta", "cadence_minutes": 30}
+        self.assertEqual(cadence_ceiling(existing, START_TRIAL), 60, "an existing source the card leaves the lane out of")
+        self.assertEqual(cadence_ceiling(existing, TRIAL_RESULT), 60)
+        self.assertEqual(cadence_ceiling(existing, draft(2, lane="discovery", action="fix_source", proposal={"action": "fix_source"})), 120)
+        self.assertEqual(cadence_ceiling({**value, "cadence_minutes": 90}, START_TRIAL), 90, "Claude's own cadence always fits")
+        self.assertIn("Lane: discovery trial (21 days; dates set on approval)", facts_html("source_upsert", value))
+        self.assertIn("Lane: discovery trial (until Oct 21, 1:00 PM ET)",
+                      facts_html("source_upsert", {**value, "trial": {"started_at": "2026-09-30T17:00:00Z", "ends_at": "2026-10-21T17:00:00Z"}}))
+        self.assertEqual(include_terms_field(value, START_TRIAL), TOPIC_FILTER_FIELD, "a trial source has no relationship scope")
+        self.assertIn("Changes existing source: Beta · trial dates",
+                      effects_html(draft(3, effects=[{"kind": "source_upsert", "name": "Beta", "is_new": False,
+                                                      "changes": {"trial": [{"ends_at": "a"}, {"ends_at": "b"}]}}])))
+        self.drafts = [START_TRIAL]
+        app = self.start()
+        rendered = self.rendered(app)
+        self.assertIn('<span class="loop-kind loop-kind-discovery">Discovery lane</span><span class="refine-chip">Start trial</span>', rendered)
+        self.assertTrue({"radar_approve_51", "radar_sendback_51", "radar_discard_51"} <= {b.key for b in app.button})
+
+    def test_start_trial_details_cap_the_cadence_at_60(self):
+        self.drafts = [START_TRIAL]
+        app = self.start()
+        app.toggle("radar_details_51").set_value(True).run()
+        self.assertEqual(list(app.exception), [])
+        cadence = app.number_input("radar_51_op0_cadence")
+        self.assertEqual((cadence.value, cadence.max), (60, 60))
+        self.assertIn("Lane: discovery trial (21 days; dates set on approval)", self.rendered(app))
+        self.assertEqual(app.text_area("radar_51_op0_include").label, TOPIC_FILTER_FIELD[0])
 
 
 if __name__ == "__main__":

@@ -4,14 +4,18 @@ Ask in your own words (track a company or relationship, or a story we
 missed); the Radar Scout, a scheduled Claude routine, drafts a card at its
 next run and adds its own cards from deal news and newsroom gaps. The owner
 approves a card (the Worker re-checks the newsroom and saves a registry
-revision), edits it and sends it back, or discards it. Anything decided in
-the last 24 hours can be undone. Top to bottom:
+revision), edits it and sends it back, or discards it. A trial result card
+(a discovery source's 21-day trial is up, or ended early by its grades) is
+answered with Promote, Extend 21 days or Retire. Anything decided in the
+last 24 hours can be undone. Top to bottom:
 
 - New request: the composer.
 - Just decided: undo within 24 hours.
 - Your turn: Claude's cards, send-backs that came back first.
-- With Claude: requests and send-backs waiting for the next run, with Withdraw.
-- Lane health: the sources Radar manages and whether they are collecting.
+- With Claude: requests and send-backs waiting for the next run, with
+  Withdraw (none on a sent-back trial result).
+- Lane health: the sources Radar manages and whether they are collecting,
+  then each trial source's scorecard.
 
 Every read and write goes through the aggregator's /radar endpoints with the
 runtime Owner PIN in a header. Nothing is cached across sessions and no
@@ -19,6 +23,7 @@ secret is stored in this repo.
 """
 
 import html
+import math
 import string
 from datetime import datetime, timedelta, timezone
 
@@ -38,8 +43,10 @@ NEWSROOM_LABEL = "Company newsroom"
 ACTION_LABEL = {
     "request": "Your request", "new_source": "New source", "registry_only": "Registry only",
     "deal_update": "Deal update", "fix_source": "Fix source", "retire_source": "Retire", "no_change": "No change",
-    # Later phases; shown if they ever arrive.
-    "start_trial": "Start trial", "trial_result": "Trial result", "missed_story": "Missed story",
+    # The trial lane (phase 3).
+    "start_trial": "Start trial", "trial_result": "Trial result",
+    # Phase 4; shown if one ever arrives.
+    "missed_story": "Missed story",
 }
 OPERATION_LABEL = {"source_upsert": "Source", "knowledge_upsert": "Relationship record", "entity_upsert": "Company"}
 EFFECT_LABEL = {"source_upsert": "source", "knowledge_upsert": "relationship record", "entity_upsert": "company"}
@@ -51,7 +58,7 @@ FIELD_LABEL = {
     "match_mode": "matching", "context_terms": "guard words", "evidence_note": "evidence", "evidence_source": "evidence",
     "evidence_as_of": "evidence", "memberships": "industries", "sec_cik": "SEC CIK", "cage_codes": "CAGE codes", "uei_codes": "UEI codes",
     "procurement_identity_evidence": "procurement evidence", "relationship": "relationship",
-    "config": "collection settings",
+    "config": "collection settings", "trial": "trial dates",
 }
 # Read-only facts a card's Details show for each operation.
 STATUS_LABEL = {"configured": "configured, collected once approved", "draft": "draft, saved but not collected",
@@ -68,6 +75,16 @@ NAME_SUFFIXES = {"inc", "inc.", "llc", "l.l.c.", "ltd", "ltd.", "limited", "corp
 # The Worker's slowest check for a Radar relationship source
 # (digest_config.radar.relationship_cadence_minutes; contract default).
 RELATIONSHIP_CADENCE_MINUTES = 30
+# The Worker's slowest check for a discovery source on a trial
+# (applyOwnerChange's trial-lane rule, digest_config.radar.trial_cadence_max_minutes),
+# and how long a trial or an Extend runs (digest_config.radar.trial_days).
+TRIAL_CADENCE_MINUTES = 60
+TRIAL_DAYS = 21
+# A trial result card: why it is due, the owner's three answers (each posts
+# exactly {"verdict"}) and how Just decided names the one taken.
+TRIAL_REASON_LABEL = {"day_21": "Day 21 result", "early_promote": "Early: 3 grades of 70+", "early_retire": "Early: 3 grades below 40"}
+VERDICT_LABEL = {"promote": "Promote", "extend": f"Extend {TRIAL_DAYS} days", "retire": "Retire"}
+VERDICT_DONE = {"promote": "Promoted", "extend": "Extended", "retire": "Retired"}
 # The Details label and help of a source's include_terms. On a relationship
 # source of any kind but acquired, the Worker's relationship filter already
 # keeps posts naming the covered company or pairing a deal word with an
@@ -153,6 +170,15 @@ def count_text(value) -> str:
     return str(value) if isinstance(value, int) and not isinstance(value, bool) else "—"
 
 
+def average_text(value) -> str:
+    """A trial's average grade, rounded half up (62.5 reads 63), or '—' when
+    it has none."""
+    try:
+        return count_text(math.floor(value + 0.5)) if isinstance(value, (int, float)) and not isinstance(value, bool) else "—"
+    except (ValueError, OverflowError):  # NaN or infinity
+        return "—"
+
+
 def lines(text) -> list:
     return [x.strip() for x in str(text or "").splitlines() if x.strip()]
 
@@ -225,6 +251,12 @@ def operations_of(draft) -> list:
 
 def approvable(draft) -> bool:
     return action_of(draft) != "no_change" and bool(operations_of(draft))
+
+
+def trial_result(draft) -> bool:
+    """A trial's verdict card: no operations; the owner picks Promote, Extend
+    or Retire and the Worker builds that change from the current registry."""
+    return action_of(draft) == "trial_result"
 
 
 def classify(drafts) -> dict:
@@ -372,6 +404,45 @@ def effects_html(draft) -> str:
     return '<div class="refine-chips">' + "".join(chips) + "</div>" if chips else ""
 
 
+def scorecard_of(draft) -> dict:
+    """A trial's numbers: the Worker's live scorecard when it sends one, else
+    the snapshot Claude put on the card."""
+    for card in (draft.get("trial_scorecard"), proposal_of(draft).get("scorecard")):
+        if isinstance(card, dict):
+            return card
+    return {}
+
+
+def trial_html(draft) -> str:
+    """A trial result card's body: why it is due, the trial's numbers, and
+    Claude's pick with what Promote does: 'Early: 3 grades of 70+' · 'Day 9
+    of 21 · 4 shown in the panel · average grade 78 · 3 graded 70+ · 0 below
+    40' · '12 collected · 9 unique · 3 duplicates · last article Sep 30' ·
+    'Claude recommends Promote · Promote: becomes a regular source'."""
+    proposal, card = proposal_of(draft), scorecard_of(draft)
+    reason = str(proposal.get("reason") or "")
+    rows = []
+    if reason:
+        rows.append(f'<div class="refine-chips"><span class="refine-chip">{esc(TRIAL_REASON_LABEL.get(reason, reason.replace("_", " ")))}</span></div>')
+    day, of_days = number(card.get("day")), number(card.get("of_days"))
+    grades = ([f"Day {day} of {of_days}"] if day and of_days else []) + [
+        f"{number(card.get('shown'))} shown in the panel", f"average grade {average_text(card.get('avg_grade'))}",
+        f"{number(card.get('grades_70_plus'))} graded 70+", f"{number(card.get('grades_below_40'))} below 40"]
+    collection = [f"{number(card.get('collected'))} collected", f"{number(card.get('unique_catches'))} unique",
+                  f"{number(card.get('duplicates'))} duplicates"]
+    if card.get("last_article"):
+        collection.append(f"last article {short_time(card['last_article'])}")
+    target = proposal.get("promote_to") if isinstance(proposal.get("promote_to"), dict) else {}
+    relationship = target.get("relationship") if isinstance(target.get("relationship"), dict) else {}
+    promote = (f"becomes a relationship source of {relationship.get('covered_entity_id') or 'its covered company'}"
+               if target.get("radar_lane") == "relationship" else "becomes a regular source")
+    pick = VERDICT_LABEL.get(str(proposal.get("verdict") or ""))
+    # short_time passes an unreadable timestamp through as text: escape it.
+    rows += [f'<div class="rule-meta">{esc(" · ".join(grades))}</div>', f'<div class="rule-meta">{esc(" · ".join(collection))}</div>',
+             f'<div class="rule-meta">{esc((f"Claude recommends {pick} · " if pick else "") + "Promote: " + promote)}</div>']
+    return "".join(rows)
+
+
 def samples_html(proposal) -> str:
     rows = []
     probe = proposal.get("probe") if isinstance(proposal.get("probe"), dict) else {}
@@ -479,7 +550,9 @@ def render_composer(base, pin):
 def recent_label(draft) -> str:
     if draft.get("status") == "rejected":
         return f"Discarded #{draft.get('id')}"
-    return f"Approved #{draft.get('id')}"
+    # A trial result records the owner's verdict.
+    result = draft.get("result") if isinstance(draft.get("result"), dict) else {}
+    return f"{VERDICT_DONE.get(str(result.get('verdict')), 'Approved')} #{draft.get('id')}"
 
 
 def render_recent(base, pin, recent):
@@ -534,13 +607,20 @@ def include_terms_field(value, draft=None) -> tuple:
 def cadence_ceiling(value, draft=None) -> int:
     """The slowest check applyOwnerChange accepts for this source_upsert, so
     the field never offers a cadence Approve would refuse: a relationship
-    source RELATIONSHIP_CADENCE_MINUTES, a covered company's newsroom 8, another
-    public company 60, anything else 120. Claude's own cadence always fits:
-    the Worker checked it against the live settings."""
+    source RELATIONSHIP_CADENCE_MINUTES, a source on a trial
+    TRIAL_CADENCE_MINUTES, a covered company's newsroom 8, another public
+    company 60, anything else 120. Claude's own cadence always fits: the
+    Worker checked it against the live settings."""
     draft = draft or {}
     relationship = in_relationship_lane(value, draft)
     covered = proposal_of(draft).get("covered_entity_id")
-    if relationship:
+    # An edit that leaves the lane out keeps the stored one: on a trial card,
+    # the trial lane.
+    trial = value.get("radar_lane") == "trial" or (
+        "radar_lane" not in value and bool(value.get("key")) and action_of(draft) in ("start_trial", "trial_result"))
+    if trial:
+        ceiling = TRIAL_CADENCE_MINUTES
+    elif relationship:
         ceiling = RELATIONSHIP_CADENCE_MINUTES
     elif value.get("companyStatus") != "noncompany" and covered and covered in (value.get("entity_ids") or []):
         ceiling = 8
@@ -567,7 +647,13 @@ def facts_html(kind, value) -> str:
             if value.get(field):
                 shown = ROLE_LABEL.get(value[field], str(value[field]).replace("_", " ")) if field == "source_role" else value[field]
                 facts.append(esc(f"{label}: {shown}"))
-        if "radar_lane" in value:
+        if value.get("radar_lane") == "trial":
+            # The Worker owns the dates: it sets them when a source joins the
+            # lane and keeps the stored ones on any edit.
+            dates = value.get("trial") if isinstance(value.get("trial"), dict) else {}
+            facts.append(esc(f"Lane: discovery trial (until {short_time(dates['ends_at'])})" if dates.get("ends_at")
+                             else f"Lane: discovery trial ({TRIAL_DAYS} days; dates set on approval)"))
+        elif "radar_lane" in value:
             facts.append(esc("Lane: " + ("relationship" if value.get("radar_lane") == "relationship" else "none (the company's own sources)")))
     elif kind == "knowledge_upsert":
         for field, label in (("kind", "Kind"), ("match_mode", "Matching")):
@@ -624,10 +710,14 @@ def operation_fields(draft_id, operations, draft=None) -> list:
 @st.fragment
 def render_card(base, pin, draft):
     """One Claude card: what it would change (a warn chip for each existing
-    record), why, the evidence, and three buttons."""
+    record), why, the evidence, and three buttons. A trial result instead
+    shows the trial's numbers and offers Promote, Extend and Retire (each
+    posts exactly {"verdict"}) beside Send back, with no Discard: the trial
+    stays due until the owner ends it."""
     draft_id = draft.get("id")
     proposal = proposal_of(draft)
     operations = operations_of(draft)
+    trial = trial_result(draft)
     why = str(proposal.get("why") or "")
     with st.container(border=True):
         st.markdown(
@@ -635,7 +725,7 @@ def render_card(base, pin, draft):
             + f'<div class="rule-text"><strong>{html.escape(draft_title(draft))}</strong></div>'
             + (f'<div class="refine-note">{esc(why)}'
                + (f' · {link(proposal.get("why_url"), "source ↗", "")}' if proposal.get("why_url") else "") + "</div>" if why else "")
-            + effects_html(draft) + evidence_html(proposal) + "</div>",
+            + effects_html(draft) + (trial_html(draft) if trial else "") + evidence_html(proposal) + "</div>",
             unsafe_allow_html=True,
         )
         samples = sample_count(proposal)
@@ -648,11 +738,26 @@ def render_card(base, pin, draft):
             history = history_html(draft)
             if history:
                 st.markdown(f'<div class="radar-body">{history}</div>', unsafe_allow_html=True)
-            edited = operation_fields(draft_id, operations, draft)
+            # A trial result is sent back with a note only (the Worker answers
+            # 400 to operations) and a verdict posts only {"verdict"}: the
+            # built operation an undone verdict leaves on the card is not
+            # offered for editing.
+            if not trial:
+                edited = operation_fields(draft_id, operations, draft)
         changed = edited != operations
         note = st.text_input("Note to Claude (optional)", key=f"radar_note_{draft_id}",
-                             placeholder="what to change; your edits in Details go back with the card")
-        if approvable(draft):
+                             placeholder="what to change" if trial else "what to change; your edits in Details go back with the card")
+        discard = None
+        if trial:
+            # Claude's pick is the primary button; the Worker answers 422 when
+            # the source has left the lane or the target lane is full.
+            pick = str(proposal.get("verdict") or "")
+            for column, (verdict, label) in zip(st.columns(3), VERDICT_LABEL.items()):
+                if column.button(label, type="primary" if verdict == pick else "secondary", key=f"radar_{verdict}_{draft_id}"):
+                    _act(base, pin, f"/drafts/{draft_id}/approve", {"verdict": verdict},
+                         lambda r, done=VERDICT_DONE[verdict]: f"{done} · {md_escape(r.get('label')) or f'draft #{draft_id}'} · undo within 24 h")
+            send = st.container()
+        elif approvable(draft):
             approve, send, discard = st.columns(3)
             if approve.button("Approve", type="primary", key=f"radar_approve_{draft_id}"):
                 _act(base, pin, f"/drafts/{draft_id}/approve", {"operations": edited} if changed else {},
@@ -667,11 +772,12 @@ def render_card(base, pin, draft):
             if changed:
                 payload["operations"] = edited
             if not payload:
-                st.info("Add a note or edit the Details, so Claude knows what to change.")
+                st.info("Add a note, so Claude knows what to change." if trial
+                        else "Add a note or edit the Details, so Claude knows what to change.")
             else:
                 _act(base, pin, f"/drafts/{draft_id}/refine", payload,
                      lambda r: f"#{draft_id} sent back{' with your edits' if changed else ''} · back {next_pickup_label()}")
-        if discard.button("Discard", key=f"radar_discard_{draft_id}"):
+        if discard is not None and discard.button("Discard", key=f"radar_discard_{draft_id}"):
             _act(base, pin, f"/drafts/{draft_id}/reject", {}, lambda r: f"#{draft_id} discarded · undo within 24 h")
 
 
@@ -689,11 +795,25 @@ def render_waiting_row(base, pin, draft):
                else f'<div class="refine-owner">Your edits to: {esc(draft_title(draft))}</div>'),
             unsafe_allow_html=True,
         )
-        if button_col.button("Withdraw", key=f"radar_withdraw_{draft_id}"):
+        # Withdraw is a reject: a sent-back trial result has none, as its card
+        # has no Discard, so the verdict stays due until the owner picks one.
+        if not trial_result(draft) and button_col.button("Withdraw", key=f"radar_withdraw_{draft_id}"):
             _act(base, pin, f"/drafts/{draft_id}/reject", {}, lambda r: f"#{draft_id} withdrawn · undo within 24 h")
 
 
 # ---------------------------------------------------------------- lane health
+
+def trial_day(source) -> str:
+    """'4/21'; '25/21 · due' once a configured trial is past its end and waits
+    for the owner's verdict (day 22 of 21 starts at ends_at); '—' without
+    dates."""
+    trial = source.get("trial") if isinstance(source.get("trial"), dict) else {}
+    day, of_days = trial.get("day"), trial.get("of_days")
+    if count_text(day) == "—" or count_text(of_days) == "—":
+        return "—"
+    due = day > of_days and source.get("configuration_status") == "configured"
+    return f"{day}/{of_days}" + (" · due" if due else "")
+
 
 def render_lanes(base, pin):
     with st.expander("Lane health"):
@@ -713,12 +833,26 @@ def render_lanes(base, pin):
         counted = any("kept_7d" in s or "excluded_7d" in s for s in sources)
         st.dataframe(
             [{"Source": s.get("name") or s.get("key"), "Covered company": s.get("covered_entity_name") or "—",
-              "Kind": str(s.get("relationship_kind") or "—").capitalize(), "Every (min)": s.get("cadence_minutes"),
+              "Kind": "Trial" if s.get("radar_lane") == "trial" else str(s.get("relationship_kind") or "—").capitalize(),
+              "Every (min)": s.get("cadence_minutes"),
               "Status": s.get("status") or "—", "Last check": short_time(s.get("last_ok")), "Last article": short_time(s.get("last_article")),
               **({"Kept (7d)": count_text(s.get("kept_7d")), "Filtered (7d)": count_text(s.get("excluded_7d"))} if counted else {})}
              for s in sources],
             hide_index=True,
         )
+        # Each trial-lane source's scorecard (a retired, paused one included),
+        # all text so a missing number never splits a column's type.
+        trials = [s for s in sources if isinstance(s.get("trial"), dict)]
+        if trials:
+            st.caption("Trial sources")
+            st.dataframe(
+                [{"Source": str(s.get("name") or s.get("key") or "—"), "Day": trial_day(s), "Shown": count_text(s["trial"].get("shown")),
+                  "Avg grade": average_text(s["trial"].get("avg_grade")), "70+": count_text(s["trial"].get("grades_70_plus")),
+                  "<40": count_text(s["trial"].get("grades_below_40")), "Unique": count_text(s["trial"].get("unique_catches")),
+                  "Duplicates": count_text(s["trial"].get("duplicates")), "Collected": count_text(s["trial"].get("collected"))}
+                 for s in trials],
+                hide_index=True,
+            )
 
 
 # ---------------------------------------------------------------- page

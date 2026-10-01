@@ -135,6 +135,17 @@ html, body, button, input, textarea, [data-testid="stAppViewContainer"] {
 .value-badge.level-low { color:var(--digest-text-muted); background:var(--digest-surface-raised); border-color:var(--digest-border); }
 .source-link { display:inline-flex; align-items:center; min-height:30px; color:#87b4ff; font:12px/1.4 var(--font-mono); text-decoration:none !important; }
 .source-link:hover { color:#c6ddff; text-decoration:underline !important; }
+/* Trial panel: an edition's trial items, collapsed at its bottom. The summary
+   draws its own +/−: the item toggle's [open] rule does not reach it. */
+.trial-panel { border-top:1px solid var(--digest-border); }
+.feed-item:has(+ .trial-panel) { border-bottom:0; }
+.trial-panel-toggle { display:flex; align-items:center; gap:14px; box-sizing:border-box; min-height:44px; padding:14px 24px; color:var(--digest-text-secondary); font:10px/1.5 var(--font-mono); letter-spacing:1.4px; text-transform:uppercase; cursor:pointer; list-style:none; }
+.trial-panel-toggle::-webkit-details-marker { display:none; }
+.trial-panel-toggle::after { content:"+"; flex-shrink:0; margin-left:auto; color:var(--digest-blue); font:20px/1 var(--font-mono); letter-spacing:0; }
+.trial-panel[open] > .trial-panel-toggle { border-bottom:1px solid var(--digest-border-soft); }
+.trial-panel[open] > .trial-panel-toggle::after { content:"−"; }
+.trial-panel-toggle:focus-visible { outline:2px solid var(--digest-blue); outline-offset:-2px; border-radius:3px; }
+.trial-origin { display:inline-flex; align-items:center; min-height:20px; padding:1px 7px; color:#e8c170; background:#241f12; border:1px solid #46391b; border-radius:3px; letter-spacing:.3px; overflow-wrap:anywhere; }
 .empty-state { padding:4rem 1.5rem; text-align:center; border:1px dashed var(--digest-border); border-radius:8px; color:var(--digest-text-muted); font-size:14px; line-height:1.8; }
 .rejected-summary { font-size:12px; color:var(--digest-text-muted); margin:14px 0; }
 .rejected-grader-title { font-size:15px; font-weight:600; }
@@ -167,6 +178,7 @@ html, body, button, input, textarea, [data-testid="stAppViewContainer"] {
   .brand-universe { margin-left:29px; }
   .edition-head { padding:15px 19px; }
   .feed-item { padding:14px 19px; gap:10px; grid-template-columns:23px minmax(0,1fr); }
+  .trial-panel-toggle { padding:12px 19px; }
   [data-testid="stVerticalBlock"]:has(> .element-container .digest-grading-title),
   [data-testid="stVerticalBlock"]:has(> [data-testid="stElementContainer"] .digest-grading-title) { padding:19px; }
   .edition-kicker { gap:6px; font-size:9px; }

@@ -4,7 +4,10 @@ One row shape for both tabs: the aggregator's POST /grades endpoint stores a
 self-contained feedback row (event, title, url, worker, the owner's
 score/action/reason, and a snapshot of the grader decision it disputes).
 Feed items resolve their event_id client-side from the edition's items; the
-Worker verifies it against the item at that rank. Nothing secret lives here:
+Worker verifies it against the item at that rank. An edition's trial-panel
+items (T1–T3) are graded in the same form, as post_type "trial" against the
+daily post (70+: belonged in the main digest; below 40: noise); those grades
+teach the grader but stay out of calibration. Nothing secret lives here:
 the runtime PIN travels in the request and is never stored.
 """
 
@@ -40,6 +43,9 @@ NO_REASON = "— no reason"
 FIRST_REASONS = ["not_my_focus", "wrong_tier", "wrong_action", "below_materiality", "duplicate_handling", "missed_ticker_link", "stale"]
 SAVE_AS = {"Just a grade": "item", "Item": "case", "Rule": "rule"}
 DEFAULT_SCORE = 78
+# What a grade on a trial-panel item (T1–T3) means, shown once in a form that
+# offers one.
+TRIAL_SCALE_NOTE = "T items: 70+ = belonged in the main digest · below 40 = noise"
 
 
 def action_for_score(score: int, scale=None) -> str:
@@ -81,8 +87,18 @@ def fetch_grade_context(base: str, event_ids: tuple) -> dict:
         return {}
 
 
-def feed_options(post: Mapping[str, Any]) -> tuple[list[dict], list[int]]:
-    """Gradable items of an edition, plus the ranks that carry no event id."""
+def _int(value):
+    try:
+        return None if isinstance(value, bool) else int(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
+def feed_options(post: Mapping[str, Any]) -> tuple[list[dict], list[str]]:
+    """Gradable items of an edition, then its trial-panel items (T1, T2, …),
+    plus the labels of the items that carry no event id ('#6', 'T2'). Each
+    option names the post_type its grade is filed under: a trial item is its
+    own event (kind 'trial'), graded against the same daily post."""
     options, ungradable = [], []
     for item in sorted(post.get("items") or [], key=lambda it: (it.get("rank") is None, it.get("rank") or 0)):
         rank = item.get("rank")
@@ -94,9 +110,22 @@ def feed_options(post: Mapping[str, Any]) -> tuple[list[dict], list[int]]:
             event_id = ids[0] if isinstance(ids, list) and len(ids) == 1 else None
         title = str(item.get("headline") or item.get("text") or "")[:96]
         if event_id is None:
-            ungradable.append(int(rank))
+            ungradable.append(f"#{int(rank)}")
             continue
-        options.append({"label": f"{rank}. {title}", "event_id": int(event_id), "item_rank": int(rank), "title": title})
+        options.append({"label": f"{rank}. {title}", "event_id": int(event_id), "item_rank": int(rank), "title": title,
+                        "post_type": "daily"})
+    trial_items = post.get("trial_items")
+    trial = [item for item in trial_items if isinstance(item, dict)] if isinstance(trial_items, list) else []
+    for item in sorted(trial, key=lambda it: (_int(it.get("rank")) is None, _int(it.get("rank")) or 0)):
+        rank = _int(item.get("rank"))
+        if rank is None:
+            continue
+        event_id = _int(item.get("event_id"))
+        title = " ".join(str(item.get("headline") or item.get("text") or "").split())[:96]
+        if event_id is None:
+            ungradable.append(f"T{rank}")
+            continue
+        options.append({"label": f"T{rank}. {title}", "event_id": event_id, "item_rank": rank, "title": title, "post_type": "trial"})
     return options, ungradable
 
 
@@ -126,7 +155,8 @@ def grader_line(ctx: Mapping[str, Any] | None) -> str:
         latest = (ctx or {}).get("latest_grade") or {}
         mine = f"you {latest.get('target_score')} {latest.get('target_action') or ''}".strip()
         parts.append(f"{count} prior grade{'s' if count != 1 else ''} · last {mine}")
-    return " · ".join(parts)
+    # A trial-panel item: the Grader's score from the trial save.
+    return ("Trial · " if grader.get("decision") == "trial" else "") + " · ".join(parts)
 
 
 def context_table(options: list[dict], context: Mapping[str, Any]) -> str:
@@ -305,8 +335,10 @@ def submit(base: str, post_type: str, post_id: int, key: str, vocab: Mapping[str
         noun = "an Item" if values["scope"] == "case" else "a Rule"
         st.info(f"To save {noun}, write your ruling (at least 20 characters). Or save it as just a grade.")
         return False
+    # A trial item files under post_type "trial" against the daily post id;
+    # post_id still follows the form's own type (a rejected item: its event).
     payload = {
-        "post_type": post_type,
+        "post_type": option.get("post_type", post_type),
         "post_id": post_id if post_type == "daily" else option["event_id"],
         "item_rank": option.get("item_rank"),
         "event_id": option["event_id"],

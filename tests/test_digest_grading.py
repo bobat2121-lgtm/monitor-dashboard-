@@ -119,6 +119,12 @@ class DigestGradingTests(unittest.TestCase):
                          "grade_count": 0, "latest_grade": None}
                 for i in ids
             }
+            # Trial events (contract P3.4): the trial save's score and rank.
+            events.update({
+                str(i): {"grader": {"run_id": "r2", "decision": "trial", "score": 72, "action": "digest", "reason_code": None, "item_rank": i - 5000},
+                         "grade_count": 0, "latest_grade": None}
+                for i in ids if 5000 < i < 5100
+            })
             return StubResponse({"ok": True, "events": events})
         raise AssertionError(f"unexpected dashboard request: {url}")
 
@@ -218,6 +224,58 @@ class DigestGradingTests(unittest.TestCase):
         self.assertEqual(len(self.forms(app)["grade_daily_102"].success), 1)
         # The other edition's draft is untouched.
         self.assertEqual(app.number_input("gscore_daily_101").value, 12)
+
+    def with_trial_items(self):
+        # Edition 101 carries a trial panel (contract P3.4): two gradable items
+        # and one without an event id; edition 102 has none.
+        self.daily[0].update(graded=2, trial_graded=1, trial_items=[
+            {"rank": 2, "event_id": 5002, "headline": "Trial story two", "url": "https://example.com/t2", "worker": "scout", "value": "low",
+             "trial_origin": {"kind": "scout_missed", "first_published_by": "reuters.com", "found_at": "2026-09-30T12:00:00Z"}},
+            {"rank": 1, "event_id": 5001, "headline": "Trial story one", "url": "https://example.com/t1", "worker": "news-monitor", "value": "high",
+             "trial_origin": {"kind": "trial_source", "source_key": "managed_beta", "source_name": "Beta newsroom", "day": 4, "of_days": 21}},
+            {"rank": 3, "headline": "Trial story without an event id", "url": "https://example.com/t3"},
+            "not an item",
+        ])
+
+    def test_trial_items_are_graded_in_the_same_form(self):
+        self.with_trial_items()
+        app = self.start_app(owner=True, pin="test-pin")
+        forms = self.forms(app)
+        form = forms["grade_daily_101"]
+        self.assertEqual(list(form.selectbox[0].options), [
+            "1. Shared autonomy procurement story", "4. Robotics deployment 101", "T1. Trial story one", "T2. Trial story two"])
+        rendered = "\n".join(markdown.value for markdown in form.markdown)
+        self.assertIn('<details class="trial-panel"><summary class="trial-panel-toggle">Trial · 3</summary>', rendered, "the panel shows in owner mode too")
+        self.assertIn("Graded 2 · 1 trial · ", rendered)
+        self.assertIn("T1. Trial story one</span><span class='grade-context-grader'>Trial · Grader: digest · score 72</span>", rendered)
+        self.assertIn("Grader: reject · score 40 · below_materiality", rendered, "main items read as before")
+        captions = [c.value for c in form.caption]
+        self.assertIn("Not gradable with the new form (edition predates event ids): #6, T3", captions)
+        self.assertEqual(captions.count("T items: 70+ = belonged in the main digest · below 40 = noise"), 1)
+        self.assertNotIn("T items: 70+ = belonged in the main digest · below 40 = noise", [c.value for c in forms["grade_daily_102"].caption],
+                         "only an edition with trial items carries the reminder")
+        self.assertIn([1011, 1014, 5001, 5002], self.context_requests)
+
+        app.selectbox("gitem_daily_101").select_index(3)
+        self.submit(app, "grade_daily_101")
+        self.post.assert_called_once()
+        # Filed as a trial grade against the daily post, never the event id.
+        self.assertEqual(
+            self.post.call_args.kwargs["json"],
+            {
+                "post_type": "trial", "post_id": 101, "item_rank": 2, "event_id": 5002,
+                "target_score": 78, "target_action": "digest", "reason_code": None,
+                "scope": "item", "note": "",
+            },
+        )
+
+    def test_a_main_item_beside_trial_items_still_posts_as_daily(self):
+        self.with_trial_items()
+        app = self.start_app(owner=True, pin="test-pin")
+        app.selectbox("gitem_daily_101").select_index(1)
+        self.submit(app, "grade_daily_101")
+        payload = self.post.call_args.kwargs["json"]
+        self.assertEqual((payload["post_type"], payload["post_id"], payload["item_rank"], payload["event_id"]), ("daily", 101, 4, 1014))
 
     def test_presets_exact_score_and_rule_or_item_rulings(self):
         app = self.start_app(owner=True, pin="test-pin")

@@ -24,6 +24,7 @@ from rules_view import render_rules_view
 from radar_view import render_radar_view
 from grading_ui import (
     FORM_ANCHOR,
+    TRIAL_SCALE_NOTE,
     context_table,
     feed_options,
     fetch_grade_context,
@@ -170,56 +171,121 @@ def pick_colors(themes) -> list[str]:
     return out
 
 
+def source_meta(url, worker) -> str:
+    """The item's source for its metadata row: the link's domain, else the worker."""
+    domain = domain_of(str(url)) if url else ""
+    if domain:
+        return f'<span class="feed-worker">{html.escape(domain)}</span>'
+    if worker:
+        return f'<span class="feed-worker">{html.escape(worker.replace("-", " ").title())}</span>'
+    return ""
+
+
+def feed_article(marker, meta_html, headline, text, level, url) -> str:
+    """One item: its marker, metadata row, collapsed summary under the
+    headline, value badge and source link. Every argument but meta_html
+    (markup) is plain text and escaped here."""
+    badge = f'<span class="value-badge level-{level}">{level.capitalize()}</span>' if level else ""
+    headline_html = (
+        f'<div class="feed-item-headline">{html.escape(headline)}</div>'
+        if headline
+        else '<span class="feed-summary-label">Read summary</span>'
+    )
+    link = (
+        f'<a class="source-link" href="{html.escape(str(url), quote=True)}" '
+        f'target="_blank" rel="noopener noreferrer">Open source ↗</a>'
+        if url
+        else '<span class="feed-meta">No source link captured</span>'
+    )
+
+    item_class = "feed-item has-value" if level else "feed-item"
+    return (
+        f'<article class="{item_class}">'
+        f'<div class="rank-marker">{html.escape(marker)}</div>'
+        '<div class="feed-copy">'
+        f'<div class="feed-meta">{meta_html}</div>'
+        # Native disclosure stays in the browser and starts collapsed.
+        '<details class="feed-details">'
+        f'<summary class="feed-toggle">{headline_html}</summary>'
+        f'<div class="feed-text">{html.escape(text)}</div>'
+        '</details>'
+        f'<div class="feed-meta">{badge}{link}</div>'
+        "</div></article>"
+    )
+
+
 def render_items(items) -> str:
     rows = []
     for item in sorted(items or [], key=item_rank_key):
-        rank = html.escape(str(item.get("rank", "–")).zfill(2))
-        text = html.escape(str(item.get("text", "")))
-        item_headline = str(item.get("headline") or "").strip()
-        level = value_level(item.get("value"))
         url = item.get("url")
-        worker = str(item.get("worker") or "").strip()
-        domain = domain_of(str(url)) if url else ""
-
-        metadata = []
-        if domain:
-            metadata.append(f'<span class="feed-worker">{html.escape(domain)}</span>')
-        elif worker:
-            metadata.append(f'<span class="feed-worker">{html.escape(worker.replace("-", " ").title())}</span>')
-        meta_html = '<span>·</span>'.join(metadata)
+        meta_html = source_meta(url, str(item.get("worker") or "").strip())
         theme = str(item.get("theme") or "").strip()
         if theme:
             color = THEME_COLORS.get(theme, TAG_PALETTE[0])
             meta_html += f'<span class="feed-theme"><i style="background:{color}"></i>{html.escape(theme)}</span>'
-
-        badge = f'<span class="value-badge level-{level}">{level.capitalize()}</span>' if level else ""
-        headline_html = (
-            f'<div class="feed-item-headline">{html.escape(item_headline)}</div>'
-            if item_headline
-            else '<span class="feed-summary-label">Read summary</span>'
-        )
-        link = (
-            f'<a class="source-link" href="{html.escape(str(url), quote=True)}" '
-            f'target="_blank" rel="noopener noreferrer">Open source ↗</a>'
-            if url
-            else '<span class="feed-meta">No source link captured</span>'
-        )
-
-        item_class = "feed-item has-value" if level else "feed-item"
-        rows.append(
-            f'<article class="{item_class}">'
-            f'<div class="rank-marker">{rank}</div>'
-            '<div class="feed-copy">'
-            f'<div class="feed-meta">{meta_html}</div>'
-            # Native disclosure stays in the browser and starts collapsed.
-            '<details class="feed-details">'
-            f'<summary class="feed-toggle">{headline_html}</summary>'
-            f'<div class="feed-text">{text}</div>'
-            '</details>'
-            f'<div class="feed-meta">{badge}{link}</div>'
-            "</div></article>"
-        )
+        rows.append(feed_article(
+            str(item.get("rank", "–")).zfill(2), meta_html, str(item.get("headline") or "").strip(),
+            str(item.get("text", "")), value_level(item.get("value")), url,
+        ))
     return "".join(rows)
+
+
+def one_line(value) -> str:
+    """A trial-panel string with every run of whitespace as one space: the
+    Worker checks item text, not trial_origin strings, and a blank line would
+    end the raw HTML block (whatever followed would render as Markdown)."""
+    return " ".join(("" if value is None else str(value)).split())
+
+
+def as_int(value):
+    try:
+        return None if isinstance(value, bool) else int(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
+def trial_origin_chip(item) -> str:
+    """Where a trial item came from: a discovery source on a trial, or a story
+    the Scout found the collection missed. Nothing for an unknown origin."""
+    origin = item.get("trial_origin") if isinstance(item.get("trial_origin"), dict) else {}
+    if origin.get("kind") == "trial_source":
+        parts = ["Trial source", one_line(origin.get("source_name") or origin.get("source_key"))]
+        day, of_days = as_int(origin.get("day")), as_int(origin.get("of_days"))
+        if day is not None and of_days is not None:
+            parts.append(f"day {day}/{of_days}")
+        text = " · ".join(part for part in parts if part)
+    elif origin.get("kind") == "scout_missed":
+        host = one_line(origin.get("first_published_by")) or domain_of(one_line(item.get("url")))
+        text = "Missed by collection" + (f" · first seen at {host}" if host else "")
+    else:
+        return ""
+    return f'<span class="trial-origin">{html.escape(text)}</span>'
+
+
+def render_trial_panel(trial_items) -> str:
+    """The edition's trial items, collapsed at its bottom: stories from
+    discovery sources on a trial and stories the collection missed. They
+    never count toward the edition's items. Nothing when the list is absent,
+    empty or malformed; entries that are not objects are skipped."""
+    if not isinstance(trial_items, list):
+        return ""
+    rows = []
+    for item in sorted((i for i in trial_items if isinstance(i, dict)), key=item_rank_key):
+        rank = as_int(item.get("rank"))
+        url = one_line(item.get("url"))
+        url = url if url.lower().startswith(("https://", "http://")) else ""
+        meta_html = source_meta(url, one_line(item.get("worker"))) + trial_origin_chip(item)
+        rows.append(feed_article(
+            f"T{rank}" if rank is not None else "T", meta_html, one_line(item.get("headline")),
+            one_line(item.get("text")), value_level(item.get("value")), url,
+        ))
+    if not rows:
+        return ""
+    return (
+        '<details class="trial-panel">'
+        f'<summary class="trial-panel-toggle">Trial · {len(rows)}</summary>'
+        f'{"".join(rows)}</details>'
+    )
 
 
 def edition_stats(post) -> str:
@@ -299,6 +365,7 @@ def daily_edition(post, latest=False, grading=False) -> str:
         f'<section class="{edition_class}">'
         f"{edition_header(post, latest=latest)}"
         f'{render_items(post.get("items") or [])}'
+        f'{render_trial_panel(post.get("trial_items"))}'
         "</section>"
     )
 
@@ -376,8 +443,13 @@ def grading_panel(post_type, post):
         return
 
     graded = int(post.get("graded") or 0)
+    # trial_graded: the edition's trial-panel grades, sent only with trial items.
+    trial_graded = as_int(post.get("trial_graded")) or 0
     timestamp = fmt_short_time(str(post.get("posted_at") or ""))
-    label = f"Graded {graded} · {timestamp}" if graded else f"Grade an item · {timestamp}"
+    if graded or trial_graded:
+        label = f"Graded {graded}" + (f" · {trial_graded} trial" if trial_graded else "") + f" · {timestamp}"
+    else:
+        label = f"Grade an item · {timestamp}"
     key = f"{post_type}_{post_id}"
 
     with st.container():
@@ -392,13 +464,17 @@ def grading_panel(post_type, post):
         if ungradable:
             st.caption(
                 "Not gradable with the new form (edition predates event ids): "
-                + ", ".join(f"#{rank}" for rank in ungradable)
+                + ", ".join(ungradable)
             )
         if not options:
             st.caption("Nothing in this edition can be graded.")
             return
         context = fetch_grade_context(WORKER_URL, tuple(o["event_id"] for o in options))
         st.markdown(context_table(options, context), unsafe_allow_html=True)
+        # Static: widgets in a form do not rerun on change, so the reminder
+        # cannot follow the selected item.
+        if any(o.get("post_type") == "trial" for o in options):
+            st.caption(TRIAL_SCALE_NOTE)
         vocab = fetch_vocabulary(WORKER_URL)
         grade_widgets(key, options, vocab)
 
@@ -495,8 +571,8 @@ def search_editions(daily, query):
         ]
         if items:
             # A search shows only the matching items, so the edition brief (whose
-            # threads cite the full edition) is left out.
-            matches.append({**post, "items": items, "brief": None})
+            # threads cite the full edition) and the trial panel are left out.
+            matches.append({**post, "items": items, "brief": None, "trial_items": []})
     return matches
 
 
