@@ -250,3 +250,7 @@ html, body, button, input, textarea, [data-testid="stAppViewContainer"] {
 .loop-kind-discovery { color:#e8c170; border-color:#46391b; background:#241f12; }
 .loop-kind-newsroom { color:#8fd19e; border-color:#2f5a3a; background:#13231a; }
 .refine-chip.applied { color:#8fbbff; border-color:#29476f; }
+/* An identity backfill card's changes: one compact row per field. */
+.radar-body .radar-table { width:100%; border-collapse:collapse; margin:0; font-size:12px; line-height:1.45; }
+.radar-body .radar-table th { font:10px/1.5 var(--font-mono); letter-spacing:1px; text-transform:uppercase; color:var(--digest-text-secondary); text-align:left; padding:4px 8px; border:0; border-bottom:1px solid var(--digest-border); background:transparent; }
+.radar-body .radar-table td { color:var(--digest-text-muted); padding:4px 8px; border:0; border-bottom:1px solid var(--digest-border); vertical-align:top; overflow-wrap:anywhere; }

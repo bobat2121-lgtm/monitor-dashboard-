@@ -77,7 +77,15 @@ obsidian black base, electric blue navigation and restrained copper-orange accen
   event and the Grader's call; it shows on the Rules tab as "from Radar
   (missed story)"); **Discard** drops it. Undoing a Send to Rules within 24
   hours withdraws the Rules draft while it is still pending; once it was
-  decided on the Rules tab, undo it there. **With Claude** lists what is waiting
+  decided on the Rules tab, undo it there. An **Identity backfill** card
+  (up to 25 companies' SEC CIK, CAGE or UEI codes, procurement evidence or
+  coverage review) lists each change in a compact table with its evidence
+  link (SEC, USAspending or SAM; http(s) only): approve it as written, or
+  send it back with a note to change rows, as it has no per-row editing. A
+  card whose probe carries a failure class (a failed probe, or the failing
+  channel's class, which the Scout copies there) shows it as a chip (**Blocked by the site**, **Needs JavaScript**, **No article list**,
+  **Page not found**, **Page too large**, **Temporary error**, **Invalid
+  URL**). **With Claude** lists what is waiting
   for the next run, with Withdraw, and **Lane health** lists Radar's sources
   with their collection status and, when the Worker reports them, the posts
   each kept and filtered out in the last 7 days (a new source's first-poll
@@ -87,7 +95,13 @@ obsidian black base, electric blue navigation and restrained copper-orange accen
   days)**: for each industry, the last evening recall audit (the 8:30 PM run
   audits a third of the industries each night), the stories it found, how
   many we captured (late catches included), how many late, and the recall
-  percentage. Radar replaces the Universe tab: the map and
+  percentage, then **Coverage by company**: how many companies have each
+  grade (A newsroom or IR site, B distributor page, C regulatory filings, D
+  procurement records, E trade press, F mentions only) and, behind a toggle
+  that is off by default, the companies below C or with a failing channel
+  (Company, Grade, Best channel, Failing, Review); an older aggregator sends
+  no coverage and the section stays hidden. Radar replaces the Universe
+  tab: the map and
   the manual editors left the dashboard, and those changes are now asked for
   in words.
 

@@ -8,8 +8,10 @@ revision), edits it and sends it back, or discards it. A trial result card
 (a discovery source's 21-day trial is up, or ended early by its grades) is
 answered with Promote, Extend 21 days or Retire. A missed-story card (a
 story you reported that we collected but the Grader ranked low) is sent to
-Rules or discarded. Anything decided in the last 24 hours can be undone.
-Top to bottom:
+Rules or discarded. An identity backfill card (phase 5: SEC CIK, CAGE and
+UEI codes, a coverage review) lists its changes with their evidence and is
+approved, sent back with a note or discarded, never edited row by row.
+Anything decided in the last 24 hours can be undone. Top to bottom:
 
 - New request: the composer.
 - Just decided: undo within 24 hours.
@@ -18,7 +20,8 @@ Top to bottom:
   Withdraw (none on a sent-back trial result).
 - Lane health: the sources Radar manages and whether they are collecting,
   then each trial source's scorecard, then recall by industry from the
-  evening recall audit.
+  evening recall audit, then coverage by company (grades A to F, and the
+  companies below C or with a failing channel behind a toggle).
 
 Every read and write goes through the aggregator's /radar endpoints with the
 runtime Owner PIN in a header. Nothing is cached across sessions and no
@@ -29,6 +32,7 @@ import html
 import math
 import string
 from datetime import datetime, timedelta, timezone
+from urllib.parse import urlsplit
 
 import requests
 import streamlit as st
@@ -53,6 +57,9 @@ ACTION_LABEL = {
     # Phase 4: the answer to a missed-story request whose story was collected
     # but ranked low; Send to Rules files it as a Rules draft.
     "missed_story": "Missed story",
+    # Phase 5: 1-25 entity_upserts filling a company's SEC CIK, CAGE or UEI
+    # codes, procurement evidence or coverage review, each with its evidence.
+    "identity_backfill": "Identity backfill",
 }
 OPERATION_LABEL = {"source_upsert": "Source", "knowledge_upsert": "Relationship record", "entity_upsert": "Company"}
 EFFECT_LABEL = {"source_upsert": "source", "knowledge_upsert": "relationship record", "entity_upsert": "company"}
@@ -64,13 +71,22 @@ FIELD_LABEL = {
     "match_mode": "matching", "context_terms": "guard words", "evidence_note": "evidence", "evidence_source": "evidence",
     "evidence_as_of": "evidence", "memberships": "industries", "sec_cik": "SEC CIK", "cage_codes": "CAGE codes", "uei_codes": "UEI codes",
     "procurement_identity_evidence": "procurement evidence", "relationship": "relationship",
-    "config": "collection settings", "trial": "trial dates",
+    "config": "collection settings", "trial": "trial dates", "coverage_review": "coverage review", "exchange_ids": "exchange IDs",
 }
 # Read-only facts a card's Details show for each operation.
 STATUS_LABEL = {"configured": "configured, collected once approved", "draft": "draft, saved but not collected",
                 "paused": "paused, not collected", "needs_adapter": "needs an adapter, not collected"}
 ROLE_LABEL = {"company_newsroom": "company newsroom", "official_customer_partner": "customer or partner newsroom",
-              "issuer_release_distribution": "release distributor"}
+              "issuer_release_distribution": "release distributor", "company_ir_earnings_presentation": "IR or earnings page",
+              "sec_filing": "SEC filings", "industry_media": "trade press"}
+# Why a probe or a channel failed (contract P5.1), as a chip on a card and in
+# Lane health's coverage table. An unknown class reads as its own words.
+FAILURE_LABEL = {"blocked": "Blocked by the site", "js_rendered": "Needs JavaScript", "no_structure": "No article list",
+                 "not_found": "Page not found", "too_large": "Page too large", "transient": "Temporary error", "invalid": "Invalid URL"}
+# Coverage grades (contract P5.2), best first: the best healthy channel's
+# rung of the ladder.
+GRADE_LABEL = {"A": "newsroom", "B": "distributor", "C": "filings", "D": "procurement", "E": "trade press", "F": "mentions only"}
+REVIEW_LABEL = {"channels_exhausted": "Channels exhausted", "mentions_only": "Mentions only", "procurement_only": "Procurement only"}
 COMPOSER_KINDS = {"Track a company or relationship": "track", "We missed this story": "missed"}
 MISSED_CAPTION = ("For a missed story, paste its link: at its next run Claude checks whether we collected it and why it was missed "
                   "(no source, a filter, a broken source or a low ranking), and answers with a card.")
@@ -280,6 +296,12 @@ def missed_story(draft) -> bool:
     return action_of(draft) == "missed_story"
 
 
+def identity_backfill(draft) -> bool:
+    """A batch of company identity fills (phase 5): approved as Claude wrote
+    it or sent back with a note, never edited row by row."""
+    return action_of(draft) == "identity_backfill"
+
+
 def result_of(draft) -> dict:
     """What a decided card recorded: a trial's verdict, a missed story's
     Rules draft id; {} when absent."""
@@ -367,17 +389,39 @@ def unfiltered_of(probe) -> dict:
     return unfiltered if isinstance(unfiltered, dict) else {}
 
 
+def failure_text(value) -> str:
+    """A failure class in plain words: 'blocked' -> 'Blocked by the site'."""
+    value = str(value or "").strip()
+    return FAILURE_LABEL.get(value, value.replace("_", " "))
+
+
+def failure_classes(proposal) -> list:
+    """Why the card's probe or channel failed (contract P5.1): the structured
+    `probe.failure_class`, where the Scout writes a failed probe or copies a
+    failing channel's class (the Worker keeps no other copy on a card). A
+    class named only in Claude's notes is not read."""
+    probe = proposal.get("probe") if isinstance(proposal.get("probe"), dict) else {}
+    value = probe.get("failure_class")
+    return [value.strip()] if isinstance(value, str) and value.strip() else []
+
+
 def evidence_html(proposal) -> str:
     """'Probe: 38 posts · 4 excluded · checked Sep 30, 1:35 PM ET · Backtest:
-    3 matches in 60 days, 1 with guard words', then a warn chip for every name
-    that also matches something else. A probe whose topic filter let nothing
-    through adds how many posts the newsroom has without it; a backtest the
+    3 matches in 60 days, 1 with guard words', then a warn chip for why the
+    probe or channel failed ('Blocked by the site') and for every name that
+    also matches something else. A probe whose topic filter let nothing
+    through adds how many posts the newsroom has without it; a failed probe
+    that counted nothing reads 'Probe failed · HTTP 403'; a backtest the
     Worker cut short shows its count as a lower bound ('5000+')."""
-    parts, chips = [], []
+    parts = []
+    chips = [f'<span class="refine-chip warn">{esc(failure_text(value))}</span>' for value in failure_classes(proposal)]
     probe = proposal.get("probe") if isinstance(proposal.get("probe"), dict) else {}
     if probe:
         excluded = sum(number(n) for n in (probe.get("excluded") or {}).values()) if isinstance(probe.get("excluded"), dict) else 0
         line = f"Probe: {number(probe.get('total_found'))} posts · {excluded} excluded"
+        if probe.get("failure_class") and "total_found" not in probe:
+            status = probe.get("http_status")
+            line = "Probe failed" + (f" · HTTP {status}" if isinstance(status, int) and not isinstance(status, bool) else "")
         unfiltered = unfiltered_of(probe)
         if unfiltered:
             line += f" · {number(unfiltered.get('total_found'))} without the topic filter"
@@ -406,16 +450,23 @@ def evidence_html(proposal) -> str:
             + ('<div class="refine-chips">' + "".join(chips) + "</div>" if chips else ""))
 
 
-def effects_html(draft) -> str:
+def effects_html(draft, overwrites_only=False) -> str:
     """A warn chip for every existing registry record the card would change,
     from the Worker's `effects` (worked out on the current registry), so the
     owner sees what Approve changes whatever the card's title says:
-    'Changes existing source: Draganfly news · configured → paused'."""
+    'Changes existing source: Draganfly news · configured → paused'.
+    `overwrites_only` (an identity backfill, whose table lists every field it
+    sets) keeps only the fields that already hold a value, so one chip per
+    filled-in company does not repeat the table."""
     chips = []
     for effect in draft.get("effects") or []:
         if not isinstance(effect, dict) or effect.get("is_new"):
             continue
         changes = effect.get("changes") if isinstance(effect.get("changes"), dict) else {}
+        if overwrites_only:
+            # A change is [before, after]; anything else is kept, to be safe.
+            changes = {field: change for field, change in changes.items()
+                       if not (isinstance(change, list) and len(change) == 2 and change[0] in (None, "", [], {}))}
         if not changes:
             continue
         parts = []
@@ -536,6 +587,86 @@ def start_trial_evidence_html(proposal) -> str:
             parts.append(f"you graded it {grade}")
         rows.append(f'<div class="rule-meta">{link(miss.get("url"), miss.get("url"), "")} · {esc(" · ".join(parts))}</div>')
     return "".join(rows)
+
+
+def value_text(value, limit: int = 160) -> str:
+    """A value an operation stores, on one line: a list joined with commas, a
+    coverage review as its status and reason ('Channels exhausted · …'), an
+    exchange listing as 'TSX ABC', an emptied field as 'cleared'."""
+    if value is None or value == "" or value == [] or value == {}:
+        text = "cleared"
+    elif isinstance(value, bool):
+        text = "yes" if value else "no"
+    elif isinstance(value, list):
+        text = ", ".join(value_text(x, limit) for x in value)
+    elif isinstance(value, dict):
+        if value.get("status"):
+            status = str(value["status"])
+            text = REVIEW_LABEL.get(status, status.replace("_", " ")) + (f" · {value['reason']}" if value.get("reason") else "")
+        elif value.get("exchange"):
+            text = f"{value['exchange']} {value.get('id') or ''}"
+        else:
+            text = "; ".join(f"{k}: {value_text(v, limit)}" for k, v in value.items())
+    else:
+        text = str(value)
+    text = " ".join(text.split())
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
+def evidence_link(url) -> str:
+    """An evidence row's source as a link named by its host ('sec.gov ↗');
+    anything but http(s) as plain text, '—' when absent."""
+    url = "".join(ch for ch in str(url or "") if ch not in "\t\n\r").strip()
+    if not url:
+        return "—"
+    try:
+        host = urlsplit(url).hostname or ""
+    except ValueError:
+        host = ""
+    host = host[4:] if host.startswith("www.") else host
+    return link(url, f"{host} ↗" if host and url.lower().startswith(("https://", "http://")) else url, "")
+
+
+def identity_rows(draft) -> list:
+    """An identity backfill's changes, one row per field each operation sets,
+    so the table is what Approve stores whatever the evidence list says: the
+    company (its registry name from the Worker's effects, else the
+    operation's), the field, the value, and the source_url of the evidence
+    row with the same entity_id and field (None when there is none)."""
+    proposal = proposal_of(draft)
+    names = {str(e["target"]): str(e["name"]) for e in dicts(draft.get("effects"))
+             if e.get("kind") == "entity_upsert" and e.get("target") and e.get("name")}
+    evidence = {}
+    for row in dicts(proposal.get("evidence")):
+        evidence.setdefault((str(row.get("entity_id") or ""), str(row.get("field") or "")), row)
+    rows = []
+    for operation in operations_of(draft):
+        value = operation.get("value") if isinstance(operation.get("value"), dict) else {}
+        entity_id = str(value.get("id") or "")
+        company = names.get(entity_id) or value.get("name") or entity_id or "—"
+        for field, stored in value.items():
+            if field in ("id", "name"):
+                continue
+            label = FIELD_LABEL.get(field, str(field).replace("_", " "))
+            rows.append({"entity_id": entity_id, "company": str(company), "field": label[:1].upper() + label[1:],
+                         "value": value_text(stored), "source_url": evidence.get((entity_id, str(field)), {}).get("source_url")})
+    return rows
+
+
+def identity_html(draft) -> str:
+    """An identity backfill card's compact table: '3 changes · 2 companies',
+    then Company, Field, Value and Evidence (a link to the SEC, USAspending or
+    SAM page, http(s) only), every cell escaped on one line."""
+    rows = identity_rows(draft)
+    if not rows:
+        return ""
+    count, companies = len(rows), len({r["entity_id"] or r["company"] for r in rows})
+    head = "".join(f"<th>{column}</th>" for column in ("Company", "Field", "Value", "Evidence"))
+    body = "".join(f'<tr><td>{esc(r["company"])}</td><td>{esc(r["field"])}</td><td>{esc(r["value"])}</td>'
+                   f'<td>{evidence_link(r["source_url"])}</td></tr>' for r in rows)
+    return (f'<div class="refine-label" style="margin-top:10px">{count} change{"" if count == 1 else "s"} · '
+            f'{companies} compan{"y" if companies == 1 else "ies"}</div>'
+            f'<table class="radar-table"><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table>')
 
 
 def samples_html(proposal) -> str:
@@ -829,11 +960,13 @@ def render_card(base, pin, draft):
     shows the trial's numbers and offers Promote, Extend and Retire (each
     posts exactly {"verdict"}) beside Send back, with no Discard: the trial
     stays due until the owner ends it. A missed story shows the Worker's
-    diagnosis and offers Send to Rules and Discard only."""
+    diagnosis and offers Send to Rules and Discard only. An identity backfill
+    shows its changes as a table with their evidence; Details offers no
+    field to edit, so Approve posts {} and Send back needs a note."""
     draft_id = draft.get("id")
     proposal = proposal_of(draft)
     operations = operations_of(draft)
-    trial, missed = trial_result(draft), missed_story(draft)
+    trial, missed, identity = trial_result(draft), missed_story(draft), identity_backfill(draft)
     why = str(proposal.get("why") or "")
     with st.container(border=True):
         st.markdown(
@@ -841,8 +974,9 @@ def render_card(base, pin, draft):
             + f'<div class="rule-text"><strong>{html.escape(draft_title(draft))}</strong></div>'
             + (f'<div class="refine-note">{esc(why)}'
                + (f' · {link(proposal.get("why_url"), "source ↗", "")}' if proposal.get("why_url") else "") + "</div>" if why else "")
-            + effects_html(draft) + (trial_html(draft) if trial else "") + (missed_story_html(draft) if missed else "")
-            + evidence_html(proposal) + (start_trial_evidence_html(proposal) if action_of(draft) == "start_trial" else "") + "</div>",
+            + effects_html(draft, overwrites_only=identity) + (trial_html(draft) if trial else "") + (missed_story_html(draft) if missed else "")
+            + evidence_html(proposal) + (start_trial_evidence_html(proposal) if action_of(draft) == "start_trial" else "")
+            + (identity_html(draft) if identity else "") + "</div>",
             unsafe_allow_html=True,
         )
         samples = sample_count(proposal)
@@ -858,17 +992,20 @@ def render_card(base, pin, draft):
             # A trial result is sent back with a note only (the Worker answers
             # 400 to operations) and a verdict posts only {"verdict"}: the
             # built operation an undone verdict leaves on the card is not
-            # offered for editing. A missed story has no operations.
-            if not trial and not missed:
+            # offered for editing. A missed story has no operations. An
+            # identity backfill is not edited row by row: a note asks Claude
+            # to change rows.
+            if not trial and not missed and not identity:
                 edited = operation_fields(draft_id, operations, draft)
         changed = edited != operations
+        note_only = trial or identity
         if missed:
             # Sent as {text}; without it the Rules draft starts from your request's words.
             note = st.text_input("Your words for Rules (optional)", key=f"radar_note_{draft_id}",
                                  placeholder="what the Grader should learn; your request's words if empty")
         else:
             note = st.text_input("Note to Claude (optional)", key=f"radar_note_{draft_id}",
-                                 placeholder="what to change" if trial else "what to change; your edits in Details go back with the card")
+                                 placeholder="what to change" if note_only else "what to change; your edits in Details go back with the card")
         discard = None
         if missed:
             # The Worker files a Rules draft about the diagnosed event and
@@ -903,7 +1040,7 @@ def render_card(base, pin, draft):
             if changed:
                 payload["operations"] = edited
             if not payload:
-                st.info("Add a note, so Claude knows what to change." if trial
+                st.info("Add a note, so Claude knows what to change." if note_only
                         else "Add a note or edit the Details, so Claude knows what to change.")
             else:
                 _act(base, pin, f"/drafts/{draft_id}/refine", payload,
@@ -961,6 +1098,104 @@ def recall_rows(recall) -> list:
              "Late": count_text(r.get("late_30d")), "Recall": percent_text(r.get("recall_pct"))} for r in rows]
 
 
+def coverage_summary(coverage) -> str:
+    """Lane health's grade line, 'A newsroom 120 · B distributor 10 · C
+    filings 26 · D procurement 5 · E trade press 0 · F mentions only 141',
+    from the Worker's counts (else counted from its rows); '' when the
+    Worker sent neither."""
+    summary = coverage.get("summary") if isinstance(coverage, dict) else None
+    rows = dicts(coverage.get("rows")) if isinstance(coverage, dict) else []
+    if isinstance(summary, dict) and summary:
+        counts = {grade: number(summary.get(grade)) for grade in GRADE_LABEL}
+    elif rows:
+        counts = {grade: sum(1 for r in rows if r.get("grade") == grade) for grade in GRADE_LABEL}
+    else:
+        return ""
+    return " · ".join(f"{grade} {label} {counts[grade]}" for grade, label in GRADE_LABEL.items())
+
+
+def channel_text(channel) -> str:
+    """One channel as text: its name (else its kind in words, else its key)
+    and why it is failing, 'Swarmer newsroom (Blocked by the site)'; a plain
+    string as is."""
+    if isinstance(channel, dict):
+        kind = str(channel.get("kind") or "")
+        name = " ".join(str(channel.get("name") or ROLE_LABEL.get(kind, kind.replace("_", " ")) or channel.get("key") or "—").split())
+        why = failure_text(channel.get("failure_class")) or " ".join(str(channel.get("status") or "").replace("_", " ").split())
+        return f"{name} ({why})" if why else name
+    return " ".join(str(channel).split()) if isinstance(channel, str) else ""
+
+
+def best_channel_text(channel) -> str:
+    """A row's best channel: 'C · Swarmer SEC filings' for a channel object,
+    'A · newsroom' for a bare grade letter, a kind in words, or '—'."""
+    if isinstance(channel, dict):
+        rung, name = str(channel.get("rung") or ""), channel_text({k: v for k, v in channel.items() if k not in ("status", "failure_class")})
+        return f"{rung} · {name}" if rung else name
+    if isinstance(channel, str) and channel.strip():
+        value = channel.strip()
+        return f"{value} · {GRADE_LABEL[value]}" if value in GRADE_LABEL else ROLE_LABEL.get(value, value.replace("_", " "))
+    return "—"
+
+
+def failing_text(failing) -> str:
+    """A row's failing channels, '; '-separated, a count, or '—' for none."""
+    if isinstance(failing, list):
+        return "; ".join(text for text in (channel_text(x) for x in failing) if text) or "—"
+    if isinstance(failing, bool):
+        return "Yes" if failing else "—"
+    if isinstance(failing, int):
+        return str(failing) if failing > 0 else "—"
+    if isinstance(failing, str):
+        return " ".join(failing.split()) or "—"
+    return "—"
+
+
+def review_text(review) -> str:
+    """A row's coverage review, 'Channels exhausted · Sep 30', or '—'."""
+    if isinstance(review, dict):
+        status = str(review.get("status") or "")
+        text = REVIEW_LABEL.get(status, status.replace("_", " ")) or "Reviewed"
+        return text + (f" · {short_time(review['checked_at'])}" if review.get("checked_at") else "")
+    if isinstance(review, str) and review.strip():
+        return REVIEW_LABEL.get(review.strip(), review.strip().replace("_", " "))
+    return "—"
+
+
+def coverage_rows(coverage) -> list:
+    """Lane health's coverage table: the companies graded below C (D, E or F)
+    plus any with a failing channel, worst grade first then by name, every
+    cell text: Company, Grade, Best channel, Failing, Review."""
+    rank = {grade: index for index, grade in enumerate("FEDCBA")}
+    rows = []
+    for row in dicts(coverage.get("rows") if isinstance(coverage, dict) else None):
+        grade, failing = str(row.get("grade") or ""), failing_text(row.get("failing"))
+        if grade not in ("D", "E", "F") and failing == "—":
+            continue
+        rows.append({"Company": " ".join(str(row.get("name") or row.get("entity_id") or "—").split()), "Grade": grade or "—",
+                     "Best channel": best_channel_text(row.get("best_channel")), "Failing": failing, "Review": review_text(row.get("review"))})
+    return sorted(rows, key=lambda r: (rank.get(r["Grade"], len(rank)), r["Company"].lower()))
+
+
+def render_coverage(coverage):
+    """Coverage by company (phase 5): the grade line, then the companies
+    below C or with a failing channel behind a toggle, off by default.
+    Lane health is an expander, and Streamlit 1.37 refuses an expander
+    inside another. Nothing at all when the Worker sent no coverage."""
+    summary = coverage_summary(coverage)
+    if not summary:
+        return
+    st.caption("Coverage by company")
+    st.caption(summary)
+    rows = coverage_rows(coverage)
+    if not rows:
+        st.caption("Every company is graded C or better, with no failing channel.")
+    elif st.toggle(f"Companies below C or with a failing channel · {len(rows)}", key="radar_coverage_table",
+                   help="A newsroom or IR site · B its page at a press-release distributor · C regulatory filings · "
+                        "D procurement records · E trade press (trial only) · F mentions only"):
+        st.dataframe(rows, hide_index=True)
+
+
 def render_source_tables(sources):
     """The sources Radar manages, then each trial source's scorecard."""
     # 7-day counts: posts delivered and distinct URLs filtered out (the
@@ -1016,6 +1251,9 @@ def render_lanes(base, pin):
                 st.dataframe(rows, hide_index=True)
             else:
                 st.caption("No recall audit yet; the 8:30 PM run audits a third of the industries each night.")
+        # Coverage by company (phase 5), last: an older Worker leaves it out
+        # and the section shows nothing.
+        render_coverage(lanes.get("coverage"))
 
 
 # ---------------------------------------------------------------- page
